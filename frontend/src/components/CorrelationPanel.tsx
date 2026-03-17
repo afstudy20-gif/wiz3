@@ -8,7 +8,6 @@ import {
   runCohensKappa,
 } from "../api";
 import { Tip, LabelTip, InfoBanner } from "./Tip";
-import { type ImputationStrategy } from "./MissingGuard";
 
 // ── shared layout ─────────────────────────────────────────────────────────────
 const PLOT_BG: Record<string, unknown> = {
