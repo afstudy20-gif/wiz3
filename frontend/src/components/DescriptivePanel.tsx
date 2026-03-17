@@ -23,6 +23,7 @@ type ChartTab = typeof CHART_TABS[number]["id"];
 
 function NumericView({ summary }: { summary: any }) {
   const [chartTab, setChartTab] = useState<ChartTab>("histogram");
+  const showGrid = useStore((s) => s.showGrid);
 
   const histData = [{
     type: "bar" as const,
@@ -101,8 +102,8 @@ function NumericView({ summary }: { summary: any }) {
         <Plot
           data={histData}
           layout={{ ...BASE_LAYOUT, autosize: true, bargap: 0.02,
-            xaxis: { ...BASE_LAYOUT.xaxis, title: { text: "Value" } },
-            yaxis: { ...BASE_LAYOUT.yaxis, title: { text: "Count" } },
+            xaxis: { ...BASE_LAYOUT.xaxis, showgrid: showGrid, title: { text: "Value" } },
+            yaxis: { ...BASE_LAYOUT.yaxis, showgrid: showGrid, title: { text: "Count" } },
           }}
           style={{ width: "100%", height: 380 }}
           useResizeHandler config={{ responsive: true, displaylogo: false, displayModeBar: false }}
@@ -116,7 +117,7 @@ function NumericView({ summary }: { summary: any }) {
           layout={{
             ...BASE_LAYOUT,
             autosize: true,
-            yaxis: { ...BASE_LAYOUT.yaxis, title: { text: "Value" } },
+            yaxis: { ...BASE_LAYOUT.yaxis, showgrid: showGrid, title: { text: "Value" } },
             xaxis: { ...BASE_LAYOUT.xaxis, showticklabels: false, zeroline: false, showgrid: false },
             showlegend: false,
             annotations: [
@@ -142,8 +143,8 @@ function NumericView({ summary }: { summary: any }) {
           data={qqData}
           layout={{ ...BASE_LAYOUT, autosize: true,
             title: { text: "Q-Q Plot (Normality)", font: { color: "#374151", size: 12 } },
-            xaxis: { ...BASE_LAYOUT.xaxis, title: { text: "Theoretical quantiles" } },
-            yaxis: { ...BASE_LAYOUT.yaxis, title: { text: "Sample quantiles" } },
+            xaxis: { ...BASE_LAYOUT.xaxis, showgrid: showGrid, title: { text: "Theoretical quantiles" } },
+            yaxis: { ...BASE_LAYOUT.yaxis, showgrid: showGrid, title: { text: "Sample quantiles" } },
           }}
           style={{ width: "100%", height: 380 }}
           useResizeHandler config={{ responsive: true, displaylogo: false, displayModeBar: false }}
@@ -156,6 +157,7 @@ function NumericView({ summary }: { summary: any }) {
 // ── Main chart for categorical columns ──────────────────────────────────────
 
 function CategoricalView({ summary }: { summary: any }) {
+  const showGrid = useStore((s) => s.showGrid);
   const cats = summary.categories.slice(0, 20);
   const colors = ["#7c3aed", "#f59e0b", "#10b981", "#ef4444", "#06b6d4", "#ec4899"];
 
@@ -196,8 +198,8 @@ function CategoricalView({ summary }: { summary: any }) {
       <Plot
         data={barData}
         layout={{ ...BASE_LAYOUT, autosize: true,
-          xaxis: { ...BASE_LAYOUT.xaxis, title: { text: "Count" } },
-          yaxis: { ...BASE_LAYOUT.yaxis, automargin: true },
+          xaxis: { ...BASE_LAYOUT.xaxis, showgrid: showGrid, title: { text: "Count" } },
+          yaxis: { ...BASE_LAYOUT.yaxis, showgrid: showGrid, automargin: true },
           margin: { ...BASE_LAYOUT.margin, l: 90 },
         }}
         style={{ width: "100%", height: Math.max(160, cats.length * 28 + 60) }}
@@ -223,6 +225,7 @@ function ScatterView({
   catCols: string[];
   defaultX: string;
 }) {
+  const showGrid = useStore((s) => s.showGrid);
   const [xCol,    setXCol]    = useState(defaultX || numCols[0] || "");
   const [yCol,    setYCol]    = useState(numCols.find((c) => c !== defaultX) ?? "");
   const [color,   setColor]   = useState("");
@@ -418,8 +421,8 @@ function ScatterView({
               layout={{
                 ...BASE_LAYOUT,
                 autosize: true,
-                xaxis: { ...BASE_LAYOUT.xaxis, title: { text: xCol } },
-                yaxis: { ...BASE_LAYOUT.yaxis, title: { text: yCol } },
+                xaxis: { ...BASE_LAYOUT.xaxis, showgrid: showGrid, title: { text: xCol } },
+                yaxis: { ...BASE_LAYOUT.yaxis, showgrid: showGrid, title: { text: yCol } },
                 legend: { font: { color: "#374151", size: 11 }, bgcolor: "rgba(249,250,251,0.9)", bordercolor: "#e5e7eb", borderwidth: 1 },
                 showlegend: hasGrouping,
                 annotations: data.regression.r != null ? [{

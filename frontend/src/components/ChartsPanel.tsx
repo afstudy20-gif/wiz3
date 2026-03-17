@@ -13,7 +13,8 @@ const PLOT_LAYOUT: Record<string, unknown> = {
 };
 
 export default function ChartsPanel() {
-  const session = useStore((s) => s.session);
+  const session  = useStore((s) => s.session);
+  const showGrid = useStore((s) => s.showGrid);
   if (!session) return null;
 
   const numCols = session.columns.filter((c) => c.kind === "numeric").map((c) => c.name);
@@ -109,7 +110,7 @@ export default function ChartsPanel() {
         {traces ? (
           <Plot
             data={traces}
-            layout={{ ...PLOT_LAYOUT, title: { text: plotData?.x ?? "", font: { color: "#374151" } }, autosize: true }}
+            layout={{ ...PLOT_LAYOUT, xaxis: { ...(PLOT_LAYOUT.xaxis as object), showgrid: showGrid }, yaxis: { ...(PLOT_LAYOUT.yaxis as object), showgrid: showGrid }, title: { text: plotData?.x ?? "", font: { color: "#374151" } }, autosize: true }}
             style={{ width: "100%", height: "100%" }}
             useResizeHandler
             config={{ responsive: true, displayModeBar: true, displaylogo: false }}

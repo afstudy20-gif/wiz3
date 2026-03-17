@@ -1,6 +1,6 @@
 import "./index.css";
 import { Component, type ReactNode } from "react";
-import { FileSpreadsheet, BarChart2, Table2, FlaskConical, GitMerge, Brain, X, TrendingUp, ClipboardList, Zap, Calculator } from "lucide-react";
+import { FileSpreadsheet, BarChart2, Table2, FlaskConical, GitMerge, Brain, X, TrendingUp, ClipboardList, Zap, Calculator, Grid3x3, Grid2x2 } from "lucide-react";
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
   state = { error: null };
@@ -41,7 +41,7 @@ const TABS = [
 ];
 
 export default function App() {
-  const { session, activeTab, setActiveTab, clearSession } = useStore();
+  const { session, activeTab, setActiveTab, clearSession, showGrid, toggleGrid } = useStore();
 
   if (!session) return <UploadZone />;
 
@@ -78,6 +78,14 @@ export default function App() {
             </button>
           ))}
         </nav>
+
+        <button
+          onClick={toggleGrid}
+          className={`p-1.5 rounded-lg transition-colors ${showGrid ? "text-indigo-500 bg-indigo-50 hover:bg-indigo-100" : "text-gray-400 hover:text-gray-700 hover:bg-gray-100"}`}
+          title={showGrid ? "Hide chart grid lines" : "Show chart grid lines"}
+        >
+          {showGrid ? <Grid3x3 size={16} /> : <Grid2x2 size={16} />}
+        </button>
 
         <button
           onClick={clearSession}

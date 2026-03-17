@@ -56,6 +56,7 @@ interface PairResult {
 
 // ── PairwiseTab ───────────────────────────────────────────────────────────────
 function PairwiseTab({ sessionId, columns }: { sessionId: string; columns: string[] }) {
+  const showGrid = useStore((s) => s.showGrid);
   const [vars, setVars] = useState<string[]>(columns.slice(0, Math.min(4, columns.length)));
   const [varFilter, setVarFilter] = useState("");
   const [method, setMethod] = useState("auto");
@@ -344,8 +345,8 @@ function PairwiseTab({ sessionId, columns }: { sessionId: string; columns: strin
                   layout={{
                     ...PLOT_BG,
                     autosize: true,
-                    xaxis: { title: active.var1, gridcolor: "#e5e7eb", zeroline: false },
-                    yaxis: { title: active.var2, gridcolor: "#e5e7eb", zeroline: false },
+                    xaxis: { title: active.var1, gridcolor: "#e5e7eb", showgrid: showGrid, zeroline: false },
+                    yaxis: { title: active.var2, gridcolor: "#e5e7eb", showgrid: showGrid, zeroline: false },
                     legend: { orientation: "h", y: -0.18, font: { size: 10, color: "#374151" } },
                     annotations: [
                       {
@@ -551,6 +552,7 @@ function MatrixTab({ sessionId, columns }: { sessionId: string; columns: string[
 
 // ── ICCTab ────────────────────────────────────────────────────────────────────
 function ICCTab({ sessionId, columns }: { sessionId: string; columns: string[] }) {
+  const showGrid = useStore((s) => s.showGrid);
   const [rater1, setRater1] = useState(columns[0] ?? "");
   const [rater2, setRater2] = useState(columns[1] ?? "");
   const [data, setData] = useState<any>(null);
@@ -636,8 +638,8 @@ function ICCTab({ sessionId, columns }: { sessionId: string; columns: string[] }
             layout={{
               ...PLOT_BG,
               autosize: true,
-              xaxis: { title: `Mean of ${rater1} & ${rater2}`, gridcolor: "#e5e7eb", zeroline: false },
-              yaxis: { title: `${rater1} − ${rater2}`, gridcolor: "#e5e7eb", zeroline: true, zerolinecolor: "#d1d5db" },
+              xaxis: { title: `Mean of ${rater1} & ${rater2}`, gridcolor: "#e5e7eb", showgrid: showGrid, zeroline: false },
+              yaxis: { title: `${rater1} − ${rater2}`, gridcolor: "#e5e7eb", showgrid: showGrid, zeroline: true, zerolinecolor: "#d1d5db" },
               shapes: [
                 { type: "line", xref: "paper", x0: 0, x1: 1, yref: "y", y0: data.bland_altman.mean_diff, y1: data.bland_altman.mean_diff, line: { color: "#f59e0b", width: 2 } },
                 { type: "line", xref: "paper", x0: 0, x1: 1, yref: "y", y0: data.bland_altman.loa_upper, y1: data.bland_altman.loa_upper, line: { color: "#ef4444", width: 1.5, dash: "dash" } },

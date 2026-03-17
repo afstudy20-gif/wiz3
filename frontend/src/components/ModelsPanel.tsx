@@ -288,6 +288,7 @@ function ForestPlot({ result, modelType, outcome }: {
   const isORTable = modelType === "ortable";
   const isCox     = modelType === "cox";
   const metric    = isCox ? "HR" : "OR";
+  const showGrid  = useStore((s) => s.showGrid);
 
   // ── Shared helpers ────────────────────────────────────────────────────────
   const fmtP  = (p: number | null) =>
@@ -416,6 +417,7 @@ function ForestPlot({ result, modelType, outcome }: {
           margin: { t: 20, r: 20, b: 70, l: 160 },
           xaxis: {
             ...FOREST_BASE.xaxis,
+            showgrid: showGrid,
             domain: [0, 0.47],
             title: { text: `Odds Ratio (95% CI)${outcome ? ` — Outcome: ${outcome}` : ""}`, font: { size: 10, color: "#374151" } },
           },
@@ -509,6 +511,7 @@ function ForestPlot({ result, modelType, outcome }: {
         margin: { t: 20, r: 20, b: 70, l: 160 },
         xaxis: {
           ...FOREST_BASE.xaxis,
+          showgrid: showGrid,
           domain: [0, 0.55],
           title: {
             text: isCox
@@ -541,7 +544,8 @@ function ForestPlot({ result, modelType, outcome }: {
 }
 
 export default function ModelsPanel() {
-  const session = useStore((s) => s.session);
+  const session  = useStore((s) => s.session);
+  const showGrid = useStore((s) => s.showGrid);
   if (!session) return null;
 
   const numCols = session.columns.filter((c) => c.kind === "numeric").map((c) => c.name);
@@ -1164,11 +1168,12 @@ export default function ModelsPanel() {
                         margin: { t: 30, r: 20, b: 50, l: 90 },
                         yaxis: {
                           ...PLOT_LAYOUT.yaxis,
+                          showgrid: showGrid,
                           domain: showKMrisktable ? [riskFrac, 1] : [0, 1],
                           range: [0, 1.05],
                           title: { text: "Survival probability" },
                         },
-                        xaxis: { ...PLOT_LAYOUT.xaxis, title: { text: `Time (${durationCol})` } },
+                        xaxis: { ...PLOT_LAYOUT.xaxis, showgrid: showGrid, title: { text: `Time (${durationCol})` } },
                         legend: {
                           font: { color: "#374151", size: 11 },
                           orientation: "h",

@@ -17,8 +17,10 @@ export interface Session {
 interface AppState {
   session: Session | null;
   activeTab: string;
+  showGrid: boolean;
   setSession: (s: Session) => void;
   setActiveTab: (t: string) => void;
+  toggleGrid: () => void;
   clearSession: () => void;
   // Column kind override (data tab kind badge)
   updateColumnKind: (name: string, kind: ColMeta["kind"]) => void;
@@ -36,9 +38,15 @@ interface AppState {
 export const useStore = create<AppState>((set) => ({
   session: null,
   activeTab: "data",
+  showGrid: localStorage.getItem("showGrid") !== "false",
   table1Result: null,
   setSession: (s) => set({ session: s, activeTab: "data", table1Result: null }),
   setActiveTab: (t) => set({ activeTab: t }),
+  toggleGrid: () => set((state) => {
+    const next = !state.showGrid;
+    localStorage.setItem("showGrid", String(next));
+    return { showGrid: next };
+  }),
   clearSession: () => set({ session: null, activeTab: "data", table1Result: null }),
   updateColumnKind: (name, kind) =>
     set((state) => {

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import Plot from "../PlotComponent";
 import { runPower } from "../api";
+import { useStore } from "../store";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -136,6 +137,7 @@ function plainEnglish(
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function PowerPanel() {
+  const showGrid = useStore((s) => s.showGrid);
   const [test,       setTest]       = useState<TestId>("t_two");
   const [solveFor,   setSolveFor]   = useState<SolveFor>("n");
   const [alpha,      setAlpha]      = useState("0.05");
@@ -496,7 +498,8 @@ export default function PowerPanel() {
                   layout={{
                     ...BASE_LAYOUT,
                     autosize: true, height: 290,
-                    xaxis: { ...BASE_LAYOUT.xaxis, title: { text: xLabel } },
+                    xaxis: { ...BASE_LAYOUT.xaxis, showgrid: showGrid, title: { text: xLabel } },
+                    yaxis: { ...BASE_LAYOUT.yaxis, showgrid: showGrid },
                     legend: { orientation: "h", y: -0.28, font: { size: 11 } },
                     shapes: currentN ? [{
                       type: "line", xref: "x", yref: "y",

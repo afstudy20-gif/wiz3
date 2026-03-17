@@ -130,6 +130,7 @@ function StyleRow({
 
 export default function ROCPanel() {
   const session = useStore((s) => s.session);
+  const showGrid = useStore((s) => s.showGrid);
   if (!session) return null;
 
   const numCols = session.columns.filter((c) => c.kind === "numeric").map((c) => c.name);
@@ -870,6 +871,8 @@ export default function ROCPanel() {
               ]}
               layout={{
                 ...PLOT_LAYOUT,
+                xaxis: { ...(PLOT_LAYOUT.xaxis as object), showgrid: showGrid },
+                yaxis: { ...(PLOT_LAYOUT.yaxis as object), showgrid: showGrid },
                 autosize: true,
                 title: { text: `ROC — ${scoreCol} → ${outcomeCol}`, font: { color: "#374151", size: 13 } },
                 legend: { font: { color: "#374151", size: 11 }, bgcolor: "rgba(249,250,251,0.9)", bordercolor: "#e5e7eb", borderwidth: 1 },
@@ -895,6 +898,8 @@ export default function ROCPanel() {
               data={multiTraces as any}
               layout={{
                 ...PLOT_LAYOUT,
+                xaxis: { ...(PLOT_LAYOUT.xaxis as object), showgrid: showGrid },
+                yaxis: { ...(PLOT_LAYOUT.yaxis as object), showgrid: showGrid },
                 autosize: true,
                 title: { text: `ROC Curves → ${outcomeCol}`, font: { color: "#374151", size: 13 } },
                 legend: {
