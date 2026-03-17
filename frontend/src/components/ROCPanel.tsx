@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import Plot from "../PlotComponent";
 import { useStore } from "../store";
 import { runROC, runROCCompare, runROCCombined } from "../api";
-import { Tip, LabelTip, InfoBanner } from "./Tip";
+import { Tip, InfoBanner } from "./Tip";
 import { MissingGuard, type ImputationStrategy } from "./MissingGuard";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
