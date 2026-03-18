@@ -5,6 +5,36 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>YuStat</title>
+    <!-- Polyfill Node.js globals used by plotly.js and its deps.
+         Must run before any ES module so it is a classic (non-module) script. -->
+    <script>
+      window.global = window.global || globalThis;
+      if (typeof window.Buffer === 'undefined') {
+        window.Buffer = (function () {
+          function Buffer(arg) {
+            if (typeof arg === 'number') return new Uint8Array(arg);
+            if (typeof arg === 'string') return new TextEncoder().encode(arg);
+            return new Uint8Array(arg);
+          }
+          Buffer.prototype = Object.create(Uint8Array.prototype);
+          Buffer.isBuffer    = function(b){ return b instanceof Uint8Array; };
+          Buffer.alloc       = function(n, fill){ var b=new Uint8Array(n); if(fill) b.fill(fill); return b; };
+          Buffer.allocUnsafe = function(n){ return new Uint8Array(n); };
+          Buffer.from        = function(a, enc){
+            if(typeof a==='string'){
+              if(enc==='base64'){ var bin=atob(a),u=new Uint8Array(bin.length); for(var i=0;i<bin.length;i++) u[i]=bin.charCodeAt(i); return u; }
+              return new TextEncoder().encode(a);
+            }
+            return new Uint8Array(a);
+          };
+          Buffer.concat = function(list){
+            var len=list.reduce(function(s,b){return s+b.length;},0), out=new Uint8Array(len), x=0;
+            list.forEach(function(b){ out.set(b,x); x+=b.length; }); return out;
+          };
+          return Buffer;
+        }());
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
