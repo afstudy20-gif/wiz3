@@ -80,7 +80,7 @@ function StatCards({ pairs }: { pairs: [string, any, string?][] }) {
 }
 
 // ── Polynomial model panel ─────────────────────────────────────────────────────
-function PolynomialSection({ sessionId, allCols, numCols }: { sessionId: string; allCols: string[]; numCols: string[] }) {
+function PolynomialSection({ sessionId, numCols }: { sessionId: string; numCols: string[] }) {
   const layout = usePlotLayout();
   const pal    = usePalette();
   const td     = useTraceDefaults();
@@ -313,10 +313,6 @@ function LMMSection({ sessionId, allCols, numCols }: { sessionId: string; allCol
 
 // ── GLM Section (Gamma + NegBinom) ────────────────────────────────────────────
 function GLMSection({ sessionId, allCols, numCols }: { sessionId: string; allCols: string[]; numCols: string[] }) {
-  const layout = usePlotLayout();
-  const pal    = usePalette();
-  const showGrid = useStore(s => s.showGrid);
-
   const [glmType, setGlmType] = useState<"gamma" | "negbinom">("gamma");
   const [outcome,    setOutcome]    = useState(numCols[0] ?? "");
   const [predictors, setPredictors] = useState<string[]>([]);
@@ -326,7 +322,6 @@ function GLMSection({ sessionId, allCols, numCols }: { sessionId: string; allCol
   const [result,     setResult]     = useState<any>(null);
   const [loading,    setLoading]    = useState(false);
   const [error,      setError]      = useState("");
-  const plotRef = useRef<any>(null);
 
   const toggle = (c: string) => setPredictors(p => p.includes(c) ? p.filter(x=>x!==c) : [...p,c]);
 

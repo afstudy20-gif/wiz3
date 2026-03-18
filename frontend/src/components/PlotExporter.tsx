@@ -8,7 +8,7 @@
  *
  * For PPTX export pptxgenjs is used client-side.
  */
-import { useState, useRef } from "react";
+import { useState } from "react";
 import Plotly from "plotly.js";
 // @ts-ignore – pptxgenjs ships CJS; types may not resolve in some setups
 import pptxgen from "pptxgenjs";

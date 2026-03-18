@@ -1182,7 +1182,6 @@ export default function ModelsPanel() {
   const isSurvival  = model === "km" || model === "cox";
   const isORTable   = model === "ortable";
   const isRCS       = model === "rcs";
-  const isPoisson   = model === "poisson";
   const hasRobustSE = model === "linear" || model === "logistic" || model === "poisson";
 
   return (
