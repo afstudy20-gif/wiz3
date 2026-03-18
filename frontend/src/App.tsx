@@ -50,28 +50,51 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-gray-50">
-      {/* Header */}
-      <header className="flex items-center gap-4 px-4 py-2.5 border-b border-gray-200 bg-white flex-shrink-0 shadow-sm">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center">
-            <FileSpreadsheet size={14} className="text-white" />
+      {/* Header — two rows so tabs always have full width */}
+      <header className="border-b border-gray-200 bg-white flex-shrink-0 shadow-sm">
+        {/* Row 1: logo · filename · actions */}
+        <div className="flex items-center gap-3 px-4 pt-2 pb-1.5">
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center">
+              <FileSpreadsheet size={14} className="text-white" />
+            </div>
+            <span className="font-bold text-gray-900 text-sm tracking-tight">YuStat</span>
           </div>
-          <span className="font-bold text-gray-900 text-sm tracking-tight">YuStat</span>
+
+          <div className="flex items-center gap-1 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 min-w-0 max-w-xs">
+            <span className="text-xs text-gray-600 truncate">{session.filename}</span>
+            <span className="text-xs text-gray-400 ml-2 flex-shrink-0">
+              {session.rows.toLocaleString()} × {session.columns.length}
+            </span>
+          </div>
+
+          <div className="ml-auto flex items-center gap-1.5">
+            <PlotThemeBar />
+            <button
+              onClick={toggleGrid}
+              className={`p-1.5 rounded-lg transition-colors ${showGrid ? "text-indigo-500 bg-indigo-50 hover:bg-indigo-100" : "text-gray-400 hover:text-gray-700 hover:bg-gray-100"}`}
+              title={showGrid ? "Hide chart grid lines" : "Show chart grid lines"}
+            >
+              {showGrid ? <Grid3x3 size={16} /> : <Grid2x2 size={16} />}
+            </button>
+            <button
+              onClick={clearSession}
+              className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+              title="Close dataset"
+            >
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
-        <div className="flex items-center gap-1 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5 max-w-xs">
-          <span className="text-xs text-gray-600 truncate">{session.filename}</span>
-          <span className="text-xs text-gray-400 ml-auto flex-shrink-0">
-            {session.rows.toLocaleString()} × {session.columns.length}
-          </span>
-        </div>
-
-        <nav className="flex gap-0.5 flex-1">
+        {/* Row 2: tab strip — scrollable so tabs are never clipped */}
+        <nav className="flex gap-0.5 px-3 pb-1.5 overflow-x-auto"
+          style={{ scrollbarWidth: "none" }}>
           {TABS.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               onClick={() => setActiveTab(id)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex-shrink-0
                 ${activeTab === id
                   ? "bg-indigo-600 text-white"
                   : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"}`}
@@ -81,24 +104,6 @@ export default function App() {
             </button>
           ))}
         </nav>
-
-        <PlotThemeBar />
-
-        <button
-          onClick={toggleGrid}
-          className={`p-1.5 rounded-lg transition-colors ${showGrid ? "text-indigo-500 bg-indigo-50 hover:bg-indigo-100" : "text-gray-400 hover:text-gray-700 hover:bg-gray-100"}`}
-          title={showGrid ? "Hide chart grid lines" : "Show chart grid lines"}
-        >
-          {showGrid ? <Grid3x3 size={16} /> : <Grid2x2 size={16} />}
-        </button>
-
-        <button
-          onClick={clearSession}
-          className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-          title="Close dataset"
-        >
-          <X size={16} />
-        </button>
       </header>
 
       {/* Content */}
