@@ -41,6 +41,11 @@ export const runLogisticTable = (data: object) => api.post("/api/models/logistic
 export const runPoisson  = (data: object) => api.post("/api/models/poisson", data);
 export const runKM = (data: object) => api.post("/api/models/survival/km", data);
 export const runCox = (data: object) => api.post("/api/models/survival/cox", data);
+export const runPolynomial  = (data: object) => api.post("/api/models/polynomial", data);
+export const runLMM         = (data: object) => api.post("/api/models/lmm", data);
+export const runGamma       = (data: object) => api.post("/api/models/gamma", data);
+export const runNegBinom    = (data: object) => api.post("/api/models/negbinom", data);
+export const runLinearDiag  = (data: object) => api.post("/api/models/linear_diag", data);
 
 export const getSparklines = (sessionId: string) =>
   api.get(`/api/stats/${sessionId}/sparklines`);

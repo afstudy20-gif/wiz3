@@ -709,3 +709,314 @@ def rcs_regression(req: RCSRequest):
         "ci_high":     _clean(ci_high),
         "x_data":      _clean(x_raw[:500]),  # raw data rug (first 500 points)
     }
+
+
+# ── Polynomial / Non-linear Regression ───────────────────────────────────────
+
+class PolynomialRequest(BaseModel):
+    session_id: str
+    outcome: str
+    predictor: str
+    degree: int = 2          # 1–5
+    covariates: List[str] = []
+    imputation: Optional[str] = "listwise"
+    robust_se: Optional[bool] = False
+
+
+@router.post("/polynomial")
+def polynomial_regression(req: PolynomialRequest):
+    df_full = _get_df(req.session_id)
+    n_total = len(df_full)
+    cols = [req.outcome, req.predictor] + req.covariates
+    df = apply_imputation(df_full, cols, req.imputation or "listwise")
+    n_excluded = n_total - len(df)
+
+    x = df[req.predictor].astype(float)
+    X_parts = {"const": np.ones(len(df))}
+    for d in range(1, req.degree + 1):
+        X_parts[f"{req.predictor}^{d}"] = x ** d
+    for cov in req.covariates:
+        X_parts[cov] = df[cov].astype(float)
+    X = pd.DataFrame(X_parts)
+    y = df[req.outcome].astype(float)
+
+    base = sm.OLS(y, X)
+    model = base.fit(cov_type="HC3", use_t=True) if req.robust_se else base.fit()
+    ci = model.conf_int()
+
+    coefs = []
+    for var in model.params.index:
+        coefs.append({
+            "variable": str(var),
+            "estimate": float(model.params[var]),
+            "se": float(model.bse[var]),
+            "t": float(model.tvalues[var]),
+            "p": float(model.pvalues[var]),
+            "ci_low": float(ci.loc[var, 0]),
+            "ci_high": float(ci.loc[var, 1]),
+        })
+
+    # Curve for plotting (hold covariates at mean)
+    x_lo, x_hi = float(x.min()), float(x.max())
+    xs = np.linspace(x_lo, x_hi, 200)
+    X_curve = np.column_stack([xs ** d for d in range(0, req.degree + 1)])
+    cov_means = [float(df[c].mean()) for c in req.covariates]
+    if cov_means:
+        X_curve = np.hstack([X_curve, np.tile(cov_means, (len(xs), 1))])
+    pred = model.get_prediction(X_curve)
+    yhat = pred.predicted_mean
+    ci_df = pred.conf_int()
+
+    return {
+        "model": f"Polynomial Regression (degree {req.degree}){' [Robust SE]' if req.robust_se else ''}",
+        "outcome": req.outcome,
+        "predictor": req.predictor,
+        "degree": req.degree,
+        "n": int(model.nobs),
+        "n_excluded": n_excluded,
+        "r_squared": float(model.rsquared),
+        "adj_r_squared": float(model.rsquared_adj),
+        "aic": float(model.aic),
+        "bic": float(model.bic),
+        "residual_se": float(np.sqrt(model.mse_resid)),
+        "coefficients": coefs,
+        "curve": {
+            "x": xs.tolist(),
+            "y": yhat.tolist(),
+            "ci_low":  ci_df[:, 0].tolist(),
+            "ci_high": ci_df[:, 1].tolist(),
+        },
+        "scatter": {
+            "x": x.tolist()[:2000],
+            "y": y.tolist()[:2000],
+        },
+    }
+
+
+# ── Linear Mixed Model (LMM) ─────────────────────────────────────────────────
+
+class LMMRequest(BaseModel):
+    session_id: str
+    outcome: str
+    fixed_effects: List[str]
+    group_col: str
+    imputation: Optional[str] = "listwise"
+
+
+@router.post("/lmm")
+def linear_mixed_model(req: LMMRequest):
+    import statsmodels.formula.api as smf
+
+    df_full = _get_df(req.session_id)
+    n_total = len(df_full)
+    cols = [req.outcome, req.group_col] + req.fixed_effects
+    df = apply_imputation(df_full, cols, req.imputation or "listwise")
+    n_excluded = n_total - len(df)
+
+    # Sanitize column names for formula
+    def safe(c: str) -> str:
+        import re
+        return re.sub(r"[^0-9a-zA-Z_]", "_", c)
+
+    rename = {c: safe(c) for c in cols}
+    df_r = df.rename(columns=rename)
+    outcome_s = safe(req.outcome)
+    group_s   = safe(req.group_col)
+    fe_s      = [safe(f) for f in req.fixed_effects]
+
+    formula = f"{outcome_s} ~ " + (" + ".join(fe_s) if fe_s else "1")
+    model = smf.mixedlm(formula, df_r, groups=df_r[group_s]).fit(reml=True)
+
+    fe_ci = model.conf_int()
+    coefs = []
+    for var in model.fe_params.index:
+        coefs.append({
+            "variable": str(var),
+            "estimate": float(model.fe_params[var]),
+            "se": float(model.bse_fe[var]),
+            "z": float(model.tvalues[var]),
+            "p": float(model.pvalues[var]),
+            "ci_low": float(fe_ci.loc[var, 0]),
+            "ci_high": float(fe_ci.loc[var, 1]),
+        })
+
+    # Random effects variance
+    re_var = float(model.cov_re.iloc[0, 0]) if model.cov_re is not None and model.cov_re.size > 0 else None
+    residual_var = float(model.scale)
+
+    return {
+        "model": "Linear Mixed Model (REML)",
+        "outcome": req.outcome,
+        "group": req.group_col,
+        "n": int(model.nobs),
+        "n_groups": int(df[req.group_col].nunique()),
+        "n_excluded": n_excluded,
+        "aic": float(model.aic),
+        "bic": float(model.bic),
+        "log_likelihood": float(model.llf),
+        "random_effect_variance": re_var,
+        "residual_variance": residual_var,
+        "icc": (re_var / (re_var + residual_var)) if re_var is not None else None,
+        "coefficients": coefs,
+    }
+
+
+# ── Gamma GLM ─────────────────────────────────────────────────────────────────
+
+class GammaRequest(BaseModel):
+    session_id: str
+    outcome: str
+    predictors: List[str]
+    link: str = "log"        # "log" | "identity" | "inverse"
+    imputation: Optional[str] = "listwise"
+    robust_se: Optional[bool] = False
+
+
+@router.post("/gamma")
+def gamma_regression(req: GammaRequest):
+    df_full = _get_df(req.session_id)
+    n_total = len(df_full)
+    df = apply_imputation(df_full, [req.outcome] + req.predictors, req.imputation or "listwise")
+    n_excluded = n_total - len(df)
+    X = pd.get_dummies(df[req.predictors], drop_first=True)
+    X = sm.add_constant(X.astype(float))
+    y = df[req.outcome].astype(float)
+
+    link_map = {"log": sm.families.links.Log(), "identity": sm.families.links.Identity(), "inverse": sm.families.links.InversePower()}
+    family = sm.families.Gamma(link=link_map.get(req.link, sm.families.links.Log()))
+    cov_type = "HC3" if req.robust_se else "nonrobust"
+    model = sm.GLM(y, X, family=family).fit(cov_type=cov_type)
+    ci = model.conf_int()
+
+    coefs = []
+    for var in model.params.index:
+        b = float(model.params[var])
+        coefs.append({
+            "variable": str(var),
+            "estimate": b,
+            "exp_estimate": float(np.exp(b)) if req.link == "log" else None,
+            "se": float(model.bse[var]),
+            "z": float(model.tvalues[var]),
+            "p": float(model.pvalues[var]),
+            "ci_low": float(ci.loc[var, 0]),
+            "ci_high": float(ci.loc[var, 1]),
+        })
+
+    return {
+        "model": f"Gamma GLM (link={req.link}){' [Robust SE]' if req.robust_se else ''}",
+        "outcome": req.outcome,
+        "link": req.link,
+        "n": int(model.nobs),
+        "n_excluded": n_excluded,
+        "aic": float(model.aic),
+        "bic": float(model.bic),
+        "deviance": float(model.deviance),
+        "scale": float(model.scale),
+        "coefficients": coefs,
+    }
+
+
+# ── Negative Binomial GLM ─────────────────────────────────────────────────────
+
+class NegBinomRequest(BaseModel):
+    session_id: str
+    outcome: str
+    predictors: List[str]
+    imputation: Optional[str] = "listwise"
+    robust_se: Optional[bool] = False
+
+
+@router.post("/negbinom")
+def negative_binomial_regression(req: NegBinomRequest):
+    df_full = _get_df(req.session_id)
+    n_total = len(df_full)
+    df = apply_imputation(df_full, [req.outcome] + req.predictors, req.imputation or "listwise")
+    n_excluded = n_total - len(df)
+    X = pd.get_dummies(df[req.predictors], drop_first=True)
+    X = sm.add_constant(X.astype(float))
+    y = df[req.outcome].astype(float)
+    cov_type = "HC3" if req.robust_se else "nonrobust"
+    model = sm.GLM(y, X, family=sm.families.NegativeBinomial()).fit(cov_type=cov_type)
+    ci = model.conf_int()
+
+    coefs = []
+    for var in model.params.index:
+        b = float(model.params[var])
+        coefs.append({
+            "variable": str(var),
+            "log_irr": b,
+            "irr": float(np.exp(b)),
+            "se": float(model.bse[var]),
+            "z": float(model.tvalues[var]),
+            "p": float(model.pvalues[var]),
+            "ci_low": float(ci.loc[var, 0]),
+            "ci_high": float(ci.loc[var, 1]),
+            "irr_ci_low":  float(np.exp(ci.loc[var, 0])),
+            "irr_ci_high": float(np.exp(ci.loc[var, 1])),
+        })
+
+    return {
+        "model": f"Negative Binomial Regression{' [Robust SE]' if req.robust_se else ''}",
+        "outcome": req.outcome,
+        "n": int(model.nobs),
+        "n_excluded": n_excluded,
+        "aic": float(model.aic),
+        "bic": float(model.bic),
+        "deviance": float(model.deviance),
+        "coefficients": coefs,
+    }
+
+
+# ── Linear Regression Diagnostic Plots ────────────────────────────────────────
+
+class DiagRequest(BaseModel):
+    session_id: str
+    outcome: str
+    predictors: List[str]
+    imputation: Optional[str] = "listwise"
+
+
+@router.post("/linear_diag")
+def linear_diagnostics(req: DiagRequest):
+    from scipy import stats as scipy_stats
+
+    df_full = _get_df(req.session_id)
+    df = apply_imputation(df_full, [req.outcome] + req.predictors, req.imputation or "listwise")
+    X = pd.get_dummies(df[req.predictors], drop_first=True)
+    X = sm.add_constant(X.astype(float))
+    y = df[req.outcome].astype(float)
+    model = sm.OLS(y, X).fit()
+
+    fitted   = model.fittedvalues.values
+    resid    = model.resid.values
+    std_res  = model.get_influence().resid_studentized_internal
+    sqrt_abs = np.sqrt(np.abs(std_res))
+
+    # QQ data
+    (osm, osr), (slope, intercept, _) = scipy_stats.probplot(resid, dist="norm")
+    qq_x_line = np.array([min(osm), max(osm)])
+    qq_y_line  = slope * qq_x_line + intercept
+
+    # Subsample for large datasets
+    N = min(len(fitted), 2000)
+    idx = np.random.choice(len(fitted), N, replace=False) if len(fitted) > N else np.arange(N)
+
+    return {
+        "residuals_fitted": {
+            "x": fitted[idx].tolist(),
+            "y": resid[idx].tolist(),
+        },
+        "qq": {
+            "theoretical": osm[idx[:len(osm)]].tolist() if len(osm) > N else osm.tolist(),
+            "sample":      osr[idx[:len(osr)]].tolist() if len(osr) > N else osr.tolist(),
+            "line_x":      qq_x_line.tolist(),
+            "line_y":      qq_y_line.tolist(),
+        },
+        "scale_location": {
+            "x": fitted[idx].tolist(),
+            "y": sqrt_abs[idx].tolist(),
+        },
+        "r_squared": float(model.rsquared),
+        "residual_se": float(np.sqrt(model.mse_resid)),
+        "n": int(model.nobs),
+    }
