@@ -35,6 +35,15 @@ function starsFor(p: number | null): string {
   return "";
 }
 
+function downloadCSV(filename: string, rows: string[][]): void {
+  const csv = rows.map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ── PairResult type ───────────────────────────────────────────────────────────
 interface PairResult {
   var1: string;
@@ -102,6 +111,21 @@ function PairwiseTab({ sessionId, columns }: { sessionId: string; columns: strin
     } finally {
       setLoading(false);
     }
+  };
+
+  const exportResults = () => {
+    const header = ["Variable 1", "Variable 2", "r / ρ", "95% CI Low", "95% CI High", "p", "n", "Method", "Stars"];
+    const rows = results.map((res) => [
+      res.var1, res.var2,
+      res.r.toFixed(4),
+      res.ci_low.toFixed(4),
+      res.ci_high.toFixed(4),
+      res.p < 0.001 ? "<0.001" : res.p.toFixed(4),
+      String(res.n),
+      res.method,
+      starsFor(res.p),
+    ]);
+    downloadCSV("correlation_pairwise.csv", [header, ...rows]);
   };
 
   const active = activeIdx != null ? results[activeIdx] : null;
@@ -185,6 +209,15 @@ function PairwiseTab({ sessionId, columns }: { sessionId: string; columns: strin
           <>
             {/* Results table */}
             <div className="panel flex-shrink-0">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-semibold text-gray-500">Results ({results.length} pairs)</span>
+                <button
+                  onClick={exportResults}
+                  className="flex items-center gap-1 text-[10px] px-2 py-1 rounded border border-gray-300 text-gray-500 hover:bg-gray-50 hover:text-indigo-600 hover:border-indigo-300 transition-colors"
+                >
+                  ↓ Export CSV
+                </button>
+              </div>
               <div className="overflow-auto max-h-52">
                 <table className="w-full text-xs border-collapse">
                   <thead className="sticky top-0 bg-white z-10">
@@ -385,6 +418,7 @@ function PairwiseTab({ sessionId, columns }: { sessionId: string; columns: strin
 
 // ── MatrixTab ─────────────────────────────────────────────────────────────────
 function MatrixTab({ sessionId, columns }: { sessionId: string; columns: string[] }) {
+  const showGrid = useStore((s) => s.showGrid);
   const [selected, setSelected] = useState<string[]>(columns.slice(0, Math.min(8, columns.length)));
   const [colFilter, setColFilter] = useState("");
   const [method, setMethod] = useState("pearson");
@@ -407,6 +441,21 @@ function MatrixTab({ sessionId, columns }: { sessionId: string; columns: string[
     } finally {
       setLoading(false);
     }
+  };
+
+  const exportMatrix = () => {
+    if (!data) return;
+    const vars: string[] = data.variables;
+    const header = ["", ...vars];
+    const rows = vars.map((r: string) => [
+      r,
+      ...vars.map((c: string) => {
+        if (r === c) return "1";
+        const v = data.matrix[r][c];
+        return v != null ? v.toFixed(4) : "";
+      }),
+    ]);
+    downloadCSV("correlation_matrix.csv", [header, ...rows]);
   };
 
   return (
@@ -491,6 +540,15 @@ function MatrixTab({ sessionId, columns }: { sessionId: string; columns: string[
 
             {/* Heatmap */}
             <div className="panel flex-1 min-h-0 flex flex-col gap-2">
+              <div className="flex items-center justify-between flex-shrink-0">
+                <span className="text-xs font-semibold text-gray-500">Correlation Matrix</span>
+                <button
+                  onClick={exportMatrix}
+                  className="flex items-center gap-1 text-[10px] px-2 py-1 rounded border border-gray-300 text-gray-500 hover:bg-gray-50 hover:text-indigo-600 hover:border-indigo-300 transition-colors"
+                >
+                  ↓ Export CSV
+                </button>
+              </div>
               <Plot
                 data={[{
                   type: "heatmap",
@@ -500,11 +558,11 @@ function MatrixTab({ sessionId, columns }: { sessionId: string; columns: string[
                   x: data.variables,
                   y: data.variables,
                   colorscale: [
-                    [0,   "#2563eb"],   // strong negative → blue
+                    [0,   "#2563eb"],
                     [0.25,"#93c5fd"],
-                    [0.5, "#f9fafb"],   // zero → near white
+                    [0.5, "#f9fafb"],
                     [0.75,"#fca5a5"],
-                    [1,   "#dc2626"],   // strong positive → red
+                    [1,   "#dc2626"],
                   ],
                   zmid: 0, zmin: -1, zmax: 1,
                   text: data.variables.map((c1: string) =>
@@ -523,6 +581,8 @@ function MatrixTab({ sessionId, columns }: { sessionId: string; columns: string[
                 layout={{
                   ...PLOT_BG,
                   autosize: true,
+                  xaxis: { showgrid: showGrid, gridcolor: "#e5e7eb", zeroline: false },
+                  yaxis: { showgrid: showGrid, gridcolor: "#e5e7eb", zeroline: false },
                   margin: { t: 20, r: 20, b: 100, l: 100 },
                 }}
                 style={{ width: "100%", height: "100%", flex: 1 }}
@@ -576,6 +636,21 @@ function ICCTab({ sessionId, columns }: { sessionId: string; columns: string[] }
     i === "Excellent" ? "text-green-600" : i === "Good" ? "text-emerald-600" :
     i === "Moderate" ? "text-amber-600" : "text-red-500";
 
+  const exportICC = () => {
+    if (!data) return;
+    const header = ["ICC(2,1)", "95% CI Low", "95% CI High", "F stat", "p", "n", "Interpretation"];
+    const row = [
+      data.icc.toFixed(4),
+      data.ci_low.toFixed(4),
+      data.ci_high.toFixed(4),
+      data.f_stat.toFixed(4),
+      data.f_p < 0.001 ? "<0.001" : data.f_p.toFixed(4),
+      String(data.n),
+      data.interpretation,
+    ];
+    downloadCSV("icc_result.csv", [header, row]);
+  };
+
   return (
     <div className="flex gap-4 h-full">
       <div className="w-52 flex-shrink-0 space-y-4">
@@ -607,7 +682,10 @@ function ICCTab({ sessionId, columns }: { sessionId: string; columns: string[] }
 
         {data && (
           <div className="panel space-y-2 text-sm">
-            <p className="text-gray-400 text-xs font-semibold">ICC(2,1) Result</p>
+            <div className="flex items-center justify-between">
+              <p className="text-gray-400 text-xs font-semibold">ICC(2,1) Result</p>
+              <button onClick={exportICC} className="text-[10px] px-1.5 py-0.5 rounded border border-gray-300 text-gray-500 hover:bg-gray-50 hover:text-indigo-600 hover:border-indigo-300 transition-colors">↓ CSV</button>
+            </div>
             <p className="text-2xl font-bold text-gray-900">{data.icc.toFixed(3)}</p>
             <p className="text-xs text-gray-500">95% CI: [{data.ci_low.toFixed(3)}, {data.ci_high.toFixed(3)}]</p>
             <p className="text-xs text-gray-500">F({data.n - 1}, {data.n - 1}) = {data.f_stat.toFixed(2)}, p = {pFmt(data.f_p)}</p>
@@ -668,6 +746,7 @@ function ICCTab({ sessionId, columns }: { sessionId: string; columns: string[] }
 
 // ── KappaTab ──────────────────────────────────────────────────────────────────
 function KappaTab({ sessionId, columns }: { sessionId: string; columns: string[] }) {
+  const showGrid = useStore((s) => s.showGrid);
   const [rater1, setRater1] = useState(columns[0] ?? "");
   const [rater2, setRater2] = useState(columns[1] ?? "");
   const [data, setData] = useState<any>(null);
@@ -691,6 +770,20 @@ function KappaTab({ sessionId, columns }: { sessionId: string; columns: string[]
   const interpColor = (i: string) =>
     i === "Almost Perfect" ? "text-green-600" : i === "Substantial" ? "text-emerald-600" :
     i === "Moderate" ? "text-amber-600" : i === "Fair" ? "text-orange-500" : "text-red-500";
+
+  const exportKappa = () => {
+    if (!data) return;
+    const header = ["κ", "95% CI Low", "95% CI High", "SE", "n", "Interpretation"];
+    const row = [
+      data.kappa.toFixed(4),
+      data.ci_low.toFixed(4),
+      data.ci_high.toFixed(4),
+      data.se.toFixed(4),
+      String(data.n),
+      data.interpretation,
+    ];
+    downloadCSV("cohens_kappa_result.csv", [header, row]);
+  };
 
   return (
     <div className="flex gap-4 h-full">
@@ -723,7 +816,10 @@ function KappaTab({ sessionId, columns }: { sessionId: string; columns: string[]
 
         {data && (
           <div className="panel space-y-2 text-sm">
-            <p className="text-gray-400 text-xs font-semibold">κ Result</p>
+            <div className="flex items-center justify-between">
+              <p className="text-gray-400 text-xs font-semibold">κ Result</p>
+              <button onClick={exportKappa} className="text-[10px] px-1.5 py-0.5 rounded border border-gray-300 text-gray-500 hover:bg-gray-50 hover:text-indigo-600 hover:border-indigo-300 transition-colors">↓ CSV</button>
+            </div>
             <p className="text-2xl font-bold text-gray-900">{data.kappa.toFixed(3)}</p>
             <p className="text-xs text-gray-500">95% CI: [{data.ci_low.toFixed(3)}, {data.ci_high.toFixed(3)}]</p>
             <p className="text-xs text-gray-500">SE = {data.se.toFixed(4)}</p>
@@ -759,8 +855,9 @@ function KappaTab({ sessionId, columns }: { sessionId: string; columns: string[]
               ...PLOT_BG,
               autosize: true,
               title: { text: "Confusion Matrix", font: { color: "#374151", size: 13 } },
+              xaxis: { side: "bottom", showgrid: showGrid, gridcolor: "#e5e7eb", zeroline: false },
+              yaxis: { showgrid: showGrid, gridcolor: "#e5e7eb", zeroline: false },
               margin: { t: 50, r: 20, b: 80, l: 100 },
-              xaxis: { side: "bottom" },
             }}
             style={{ width: "100%", height: "100%" }}
             useResizeHandler
