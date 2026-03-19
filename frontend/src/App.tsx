@@ -1,6 +1,6 @@
 import "./index.css";
-import { Component, type ReactNode } from "react";
-import { FileSpreadsheet, BarChart2, Table2, FlaskConical, GitMerge, Brain, X, TrendingUp, ClipboardList, Zap, Calculator, Grid3x3, Grid2x2, Shapes } from "lucide-react";
+import { Component, useState, type ReactNode } from "react";
+import { FileSpreadsheet, BarChart2, Table2, FlaskConical, GitMerge, Brain, X, TrendingUp, ClipboardList, Zap, Calculator, Grid3x3, Grid2x2, Shapes, FolderOpen } from "lucide-react";
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
   state = { error: null };
@@ -43,13 +43,128 @@ const TABS = [
   { id: "charts",      label: "Charts",      icon: BarChart2 },
 ];
 
+/** Save current session preview as CSV and trigger download */
+function saveSessionCSV(session: { filename: string; columns: { name: string }[]; preview: Record<string, unknown>[] }) {
+  const headers = session.columns.map((c) => c.name);
+  const rows = session.preview.map((row) =>
+    headers.map((h) => {
+      const v = row[h];
+      return `"${String(v ?? "").replace(/"/g, '""')}"`;
+    }).join(",")
+  );
+  const csv = [headers.map((h) => `"${h}"`).join(","), ...rows].join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = session.filename.replace(/\.(csv|xlsx|sav|xls)$/i, "") + "_export.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Save current session preview as XLSX and trigger download */
+async function saveSessionXLSX(session: { filename: string; columns: { name: string }[]; preview: Record<string, unknown>[] }) {
+  const XLSX = (await import("xlsx")).default;
+  const headers = session.columns.map((c) => c.name);
+  const data = [headers, ...session.preview.map((row) => headers.map((h) => row[h] ?? null))];
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Data");
+  XLSX.writeFile(wb, session.filename.replace(/\.(csv|xlsx|sav|xls)$/i, "") + "_export.xlsx");
+}
+
+/** Modal asking user to save before opening a new file */
+function SaveBeforeOpenModal({
+  session,
+  onSave,
+  onSkip,
+  onCancel,
+}: {
+  session: { filename: string; columns: { name: string }[]; preview: Record<string, unknown>[] };
+  onSave: (fmt: "csv" | "xlsx") => void;
+  onSkip: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+        <h3 className="font-semibold text-gray-900 text-base">Save current dataset?</h3>
+        <p className="text-sm text-gray-500">
+          Do you want to save <strong>{session.filename}</strong> before opening a new file?
+        </p>
+        <div className="flex flex-col gap-2">
+          <div className="flex gap-2">
+            <button
+              onClick={() => onSave("csv")}
+              className="flex-1 btn-primary text-sm py-2"
+            >
+              Save as CSV
+            </button>
+            <button
+              onClick={() => onSave("xlsx")}
+              className="flex-1 btn-primary text-sm py-2"
+            >
+              Save as XLSX
+            </button>
+          </div>
+          <button
+            onClick={onSkip}
+            className="w-full text-sm text-gray-600 border border-gray-200 rounded-lg py-2 hover:bg-gray-50 transition-colors"
+          >
+            Don't save, open new file
+          </button>
+          <button
+            onClick={onCancel}
+            className="w-full text-xs text-gray-400 hover:text-gray-700 py-1"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const { session, activeTab, setActiveTab, clearSession, showGrid, toggleGrid } = useStore();
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [saveBusy, setSaveBusy] = useState(false);
+
+  const handleOpenNew = () => setShowSaveModal(true);
+
+  const handleSave = async (fmt: "csv" | "xlsx") => {
+    if (!session || saveBusy) return;
+    setSaveBusy(true);
+    try {
+      if (fmt === "csv") saveSessionCSV(session);
+      else await saveSessionXLSX(session);
+    } finally {
+      setSaveBusy(false);
+      setShowSaveModal(false);
+      clearSession();
+    }
+  };
+
+  const handleSkip = () => {
+    setShowSaveModal(false);
+    clearSession();
+  };
+
+  const handleCancel = () => setShowSaveModal(false);
 
   if (!session) return <UploadZone />;
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-gray-50">
+      {showSaveModal && (
+        <SaveBeforeOpenModal
+          session={session}
+          onSave={handleSave}
+          onSkip={handleSkip}
+          onCancel={handleCancel}
+        />
+      )}
+
       {/* Header — two rows so tabs always have full width */}
       <header className="border-b border-gray-200 bg-white flex-shrink-0 shadow-sm">
         {/* Row 1: logo · filename · actions */}
@@ -78,8 +193,15 @@ export default function App() {
               {showGrid ? <Grid3x3 size={16} /> : <Grid2x2 size={16} />}
             </button>
             <button
-              onClick={clearSession}
+              onClick={handleOpenNew}
               className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+              title="Open new file"
+            >
+              <FolderOpen size={16} />
+            </button>
+            <button
+              onClick={handleOpenNew}
+              className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
               title="Close dataset"
             >
               <X size={16} />

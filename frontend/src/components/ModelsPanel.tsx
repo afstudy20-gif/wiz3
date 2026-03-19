@@ -3,6 +3,7 @@ import Plot from "../PlotComponent";
 import { useStore } from "../store";
 import { runLinear, runLogistic, runKM, runCox, runLogisticTable, runRCS, runPoisson, getSparklines } from "../api";
 import { Tip, InfoBanner } from "./Tip";
+import ResultExporter from "./ResultExporter";
 import { MissingGuard, type ImputationStrategy } from "./MissingGuard";
 
 const PLOT_LAYOUT = {
@@ -130,9 +131,29 @@ function CoefTable({
   // Detect Poisson mode
   const isPoisson  = !hrMode && !isLogistic && coefs.length > 0 && coefs[0].irr != null;
 
+  // ── Export rows (generic) ─────────────────────────────────────────────────
+  const coefExportHeaders = isPoisson
+    ? ["Variable", "Log-IRR", "SE", "z", "p-value", "IRR", "CI_low", "CI_high"]
+    : isLogistic
+      ? ["Variable", "Log-Odds", "SE", "z", "p-value", "OR", "CI_low", "CI_high"]
+      : hrMode
+        ? ["Variable", "HR", "SE", "z", "p-value", "CI_low", "CI_high"]
+        : ["Variable", "Estimate", "SE", "t", "p-value", "CI_low", "CI_high"];
+  const coefExportRows = coefs.map((c: any) => {
+    if (isPoisson) return [c.variable, c.log_irr?.toFixed(4) ?? "", c.se?.toFixed(4) ?? "", c.z?.toFixed(3) ?? "", c.p < 0.001 ? "<0.001" : c.p?.toFixed(4) ?? "", c.irr?.toFixed(3) ?? "", c.irr_ci_low?.toFixed(3) ?? "", c.irr_ci_high?.toFixed(3) ?? ""];
+    if (isLogistic) return [c.variable, c.log_odds?.toFixed(4) ?? "", c.se?.toFixed(4) ?? "", c.z?.toFixed(3) ?? "", c.p < 0.001 ? "<0.001" : c.p?.toFixed(4) ?? "", c.odds_ratio?.toFixed(3) ?? "", c.or_ci_low?.toFixed(3) ?? "", c.or_ci_high?.toFixed(3) ?? ""];
+    if (hrMode) return [c.variable, c.hr?.toFixed(4) ?? "", c.se?.toFixed(4) ?? "", (c.t ?? c.z)?.toFixed(3) ?? "", c.p < 0.001 ? "<0.001" : c.p?.toFixed(4) ?? "", c.hr_ci_low?.toFixed(3) ?? "", c.hr_ci_high?.toFixed(3) ?? ""];
+    return [c.variable, c.estimate?.toFixed(4) ?? "", c.se?.toFixed(4) ?? "", (c.t ?? c.z)?.toFixed(3) ?? "", c.p < 0.001 ? "<0.001" : c.p?.toFixed(4) ?? "", c.ci_low?.toFixed(3) ?? "", c.ci_high?.toFixed(3) ?? ""];
+  });
+  const coefTitle = isPoisson ? "Poisson_Coefficients" : isLogistic ? "Logistic_Coefficients" : hrMode ? "Cox_Coefficients" : "Linear_Coefficients";
+
   // ── Poisson table ────────────────────────────────────────────────────────
   if (isPoisson) {
     return (
+      <div>
+        <div className="flex justify-end mb-1">
+          <ResultExporter title={coefTitle} headers={coefExportHeaders} rows={coefExportRows} />
+        </div>
       <div className="overflow-auto rounded border border-gray-200 mt-3">
         <table>
           <thead>
@@ -171,12 +192,17 @@ function CoefTable({
           </tbody>
         </table>
       </div>
+      </div>
     );
   }
 
   // ── Logistic regression table ────────────────────────────────────────────
   if (isLogistic) {
     return (
+      <div>
+        <div className="flex justify-end mb-1">
+          <ResultExporter title={coefTitle} headers={coefExportHeaders} rows={coefExportRows} />
+        </div>
       <div className="overflow-auto rounded border border-gray-200 mt-3">
         <table>
           <thead>
@@ -215,11 +241,16 @@ function CoefTable({
           </tbody>
         </table>
       </div>
+      </div>
     );
   }
 
   // ── Linear / Cox (HR) table ──────────────────────────────────────────────
   return (
+    <div>
+      <div className="flex justify-end mb-1">
+        <ResultExporter title={coefTitle} headers={coefExportHeaders} rows={coefExportRows} />
+      </div>
     <div className="overflow-auto rounded border border-gray-200 mt-3">
       <table>
         <thead>
@@ -260,6 +291,7 @@ function CoefTable({
         </tbody>
       </table>
     </div>
+    </div>
   );
 }
 
@@ -277,42 +309,24 @@ function ORTable({ rows, outcome, selectionMethod, nMulti, nTotal }: {
 
   const notEntered = (r: any) => r.multi_or == null && r.uni_or != null;
 
-  const exportCSV = () => {
-    const header = "Variable,Uni OR,Uni CI low,Uni CI high,Uni p,Multi OR,Multi CI low,Multi CI high,Multi p";
-    const dataRows = rows.map((r) =>
-      [
-        r.variable,
-        r.uni_or?.toFixed(4) ?? "",
-        r.uni_ci_low?.toFixed(4) ?? "",
-        r.uni_ci_high?.toFixed(4) ?? "",
-        r.uni_p?.toFixed(6) ?? "",
-        r.multi_or?.toFixed(4) ?? "",
-        r.multi_ci_low?.toFixed(4) ?? "",
-        r.multi_ci_high?.toFixed(4) ?? "",
-        r.multi_p?.toFixed(6) ?? "",
-      ].join(",")
-    );
-    const csv = ["\uFEFF" + `Outcome: ${outcome}`, header, ...dataRows].join("\r\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `OR_Table_${outcome}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  const orExportHeaders = ["Variable", "Uni OR", "Uni CI low", "Uni CI high", "Uni p", "Multi OR", "Multi CI low", "Multi CI high", "Multi p"];
+  const orExportRows = rows.map((r: any) => [
+    r.variable,
+    r.uni_or?.toFixed(4) ?? "",
+    r.uni_ci_low?.toFixed(4) ?? "",
+    r.uni_ci_high?.toFixed(4) ?? "",
+    r.uni_p?.toFixed(6) ?? "",
+    r.multi_or?.toFixed(4) ?? "",
+    r.multi_ci_low?.toFixed(4) ?? "",
+    r.multi_ci_high?.toFixed(4) ?? "",
+    r.multi_p?.toFixed(6) ?? "",
+  ]);
 
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
         <p className="text-xs text-gray-400">Outcome: <span className="text-gray-700 font-mono">{outcome}</span></p>
-        <button
-          onClick={exportCSV}
-          className="flex items-center gap-1 px-2 py-1 rounded text-xs text-gray-400 hover:text-gray-900 hover:bg-gray-200 border border-gray-300 transition-colors"
-          title="Export OR table as CSV"
-        >
-          ↓ Export CSV
-        </button>
+        <ResultExporter title={`OR_Table_${outcome}`} headers={orExportHeaders} rows={orExportRows} />
       </div>
       {selectionMethod && selectionMethod !== "All variables (Enter)" && (
         <div className="flex items-center gap-2 mb-2 px-2 py-1.5 rounded bg-gray-100 border border-gray-300">
@@ -1088,7 +1102,8 @@ export default function ModelsPanel() {
 
   interface KmStyle { color: string; width: number; dash: string; }
   const [kmStyles, setKmStyles] = useState<KmStyle[]>([]);
-  const kmPlotRef = useRef<any>(null);
+  const kmPlotRef  = useRef<any>(null);
+  const rcsPlotRef = useRef<any>(null);
 
   // KM display feature toggles
   const [showKMci,        setShowKMci]        = useState(true);
@@ -1268,10 +1283,6 @@ export default function ModelsPanel() {
                   ))}
                 </div>
               </div>
-              <button className="btn-primary w-full" onClick={run} disabled={loading}>
-                {loading ? "Fitting…" : "Fit RCS Model"}
-              </button>
-              {error && <p className="text-red-400 text-xs">{error}</p>}
             </>
           ) : isSurvival ? (
             <>
@@ -1396,12 +1407,16 @@ export default function ModelsPanel() {
           )}
           <MissingGuard
             sessionId={sid}
-            columns={isSurvival ? [durationCol, eventCol, ...(model === "cox" ? predictors : [])] : [...predictors, outcome]}
+            columns={isRCS
+              ? [rcsPredictor, rcsOutcome, ...rcsCovariates]
+              : isSurvival
+                ? [durationCol, eventCol, ...(model === "cox" ? predictors : [])]
+                : [...predictors, outcome]}
             imputation={imputation}
             onImputation={setImputation}
           >
-            <button className="btn-primary w-full" onClick={run} disabled={loading || (!isSurvival && predictors.length === 0) || (isORTable && predictors.length < 1)}>
-              {loading ? "Fitting…" : "Fit Model"}
+            <button className="btn-primary w-full" onClick={run} disabled={loading || (!isSurvival && !isRCS && predictors.length === 0) || (isORTable && predictors.length < 1)}>
+              {loading ? "Fitting…" : isRCS ? "Fit RCS Model" : "Fit Model"}
             </button>
           </MissingGuard>
           {error && <p className="text-red-400 text-xs">{error}</p>}
@@ -1417,9 +1432,22 @@ export default function ModelsPanel() {
               <h4 className="font-semibold text-gray-900">
                 {result.predictor} &amp; {result.outcome}: Restricted Cubic Spline
               </h4>
-              <div className="flex items-center gap-3 text-xs text-gray-500">
-                <span>n = {result.n}{result.n_events != null ? `, events = ${result.n_events}` : ""}</span>
-                {result.aic != null && <span>AIC = {result.aic?.toFixed(1)}</span>}
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 text-xs text-gray-500">
+                  <span>n = {result.n}{result.n_events != null ? `, events = ${result.n_events}` : ""}</span>
+                  {result.aic != null && <span>AIC = {result.aic?.toFixed(1)}</span>}
+                </div>
+                <ResultExporter
+                  title={`RCS_${result.predictor}_${result.outcome}`}
+                  headers={["x", "OR", "CI_low", "CI_high"]}
+                  rows={(result.x_values as number[]).map((x: number, i: number) => [
+                    x.toFixed(4),
+                    (result.or_values as number[])[i]?.toFixed(4) ?? "",
+                    (result.ci_low as number[])[i]?.toFixed(4) ?? "",
+                    (result.ci_high as number[])[i]?.toFixed(4) ?? "",
+                  ])}
+                  plotRef={rcsPlotRef}
+                />
               </div>
             </div>
 
@@ -1434,6 +1462,7 @@ export default function ModelsPanel() {
 
             {/* Dose-response plot */}
             <Plot
+              ref={rcsPlotRef}
               data={[
                 /* CI band */
                 {

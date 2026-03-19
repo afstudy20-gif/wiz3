@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import Plot from "../PlotComponent";
 import { useStore } from "../store";
+import ResultExporter from "./ResultExporter";
 import {
   runCorrelationPair,
   runCorrelationMatrix,
@@ -114,20 +115,18 @@ function PairwiseTab({ sessionId, columns }: { sessionId: string; columns: strin
     }
   };
 
-  const exportResults = () => {
-    const header = ["Variable 1", "Variable 2", "r / ρ", "95% CI Low", "95% CI High", "p", "n", "Method", "Stars"];
-    const rows = results.map((res) => [
-      res.var1, res.var2,
-      res.r.toFixed(4),
-      res.ci_low.toFixed(4),
-      res.ci_high.toFixed(4),
-      res.p < 0.001 ? "<0.001" : res.p.toFixed(4),
-      String(res.n),
-      res.method,
-      starsFor(res.p),
-    ]);
-    downloadCSV("correlation_pairwise.csv", [header, ...rows]);
-  };
+  const pairHeaders = ["Variable 1", "Variable 2", "r / ρ", "95% CI Low", "95% CI High", "p", "n", "Method", "Stars"];
+  const pairRows = results.map((res) => [
+    res.var1, res.var2,
+    res.r.toFixed(4),
+    res.ci_low.toFixed(4),
+    res.ci_high.toFixed(4),
+    res.p < 0.001 ? "<0.001" : res.p.toFixed(4),
+    String(res.n),
+    res.method,
+    starsFor(res.p),
+  ]);
+
 
   const active = activeIdx != null ? results[activeIdx] : null;
 
@@ -212,12 +211,7 @@ function PairwiseTab({ sessionId, columns }: { sessionId: string; columns: strin
             <div className="panel flex-shrink-0">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-semibold text-gray-500">Results ({results.length} pairs)</span>
-                <button
-                  onClick={exportResults}
-                  className="flex items-center gap-1 text-[10px] px-2 py-1 rounded border border-gray-300 text-gray-500 hover:bg-gray-50 hover:text-indigo-600 hover:border-indigo-300 transition-colors"
-                >
-                  ↓ Export CSV
-                </button>
+                <ResultExporter title="correlation_pairwise" headers={pairHeaders} rows={pairRows} />
               </div>
               <div className="overflow-auto max-h-52">
                 <table className="w-full text-xs border-collapse">

@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useStore } from "../store";
 import api from "../api";
 import Plot from "../PlotComponent";
+import ResultExporter from "./ResultExporter";
 
 const BASE_LAYOUT = {
   paper_bgcolor: "transparent",
@@ -661,6 +662,34 @@ export default function DescriptivePanel() {
                       )}
                     </p>
                   </div>
+                  <div className="flex items-center gap-3">
+                    <ResultExporter
+                      title={`Summary_${selected}`}
+                      headers={summary.type === "numeric"
+                        ? ["Statistic", "Value"]
+                        : ["Category", "Count", "Percent"]}
+                      rows={summary.type === "numeric"
+                        ? [
+                            ["N", summary.n],
+                            ["Missing", summary.missing],
+                            ["Mean", summary.mean?.toFixed(4) ?? ""],
+                            ["SD", summary.std?.toFixed(4) ?? ""],
+                            ["Median", summary.median?.toFixed(4) ?? ""],
+                            ["Q1", summary.q1?.toFixed(4) ?? ""],
+                            ["Q3", summary.q3?.toFixed(4) ?? ""],
+                            ["IQR", summary.iqr?.toFixed(4) ?? ""],
+                            ["Min", summary.min?.toFixed(4) ?? ""],
+                            ["Max", summary.max?.toFixed(4) ?? ""],
+                            ["Skewness", summary.skewness?.toFixed(4) ?? ""],
+                            ["Kurtosis", summary.kurtosis?.toFixed(4) ?? ""],
+                            ["Normality test", summary.normality_test ?? ""],
+                            ["Normality p", summary.normality_p?.toFixed(4) ?? summary.shapiro_p?.toFixed(4) ?? ""],
+                          ]
+                        : (summary.categories ?? []).map((c: any) => [
+                            c.value, c.count,
+                            c.pct != null ? `${c.pct.toFixed(1)}%` : "",
+                          ])}
+                    />
                   {summary.type === "numeric" && (
                     <div className={`px-3 py-1.5 rounded-lg text-xs font-semibold border
                       ${summary.normal
@@ -680,6 +709,7 @@ export default function DescriptivePanel() {
                       {summary.n_categories} categories
                     </div>
                   )}
+                  </div>
                 </div>
 
                 {/* Stats strip (numeric) */}

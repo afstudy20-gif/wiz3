@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useStore } from "../store";
 import { runTTest, runChiSquare, runAnova, runMannWhitney, runFisher, runKruskal } from "../api";
+import ResultExporter from "./ResultExporter";
 
 const TESTS = [
   { id: "ttest_1sample",  label: "One-sample t-test",     group: "Parametric" },
@@ -22,15 +23,22 @@ function ResultCard({ result }: { result: any }) {
   const skip = ["test", "interpretation", "significant", "crosstab", "groups",
                 "table", "row_labels", "col_labels", "curve"];
 
+  const statEntries = Object.entries(result).filter(([k]) => !skip.includes(k));
+  const exportHeaders = ["Statistic", "Value"];
+  const exportRows = statEntries.map(([k, v]) => [k, fmt(v)]);
+
   return (
     <div className="panel space-y-3">
       <div className="flex items-center justify-between">
         <h4 className="font-semibold text-gray-900">{result.test}</h4>
-        {"significant" in result && (
-          <span className={result.significant ? "badge-sig" : "badge-ns"}>
-            {result.significant ? "Significant" : "Not significant"}
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          <ResultExporter title={result.test ?? "hypothesis_test"} headers={exportHeaders} rows={exportRows} />
+          {"significant" in result && (
+            <span className={result.significant ? "badge-sig" : "badge-ns"}>
+              {result.significant ? "Significant" : "Not significant"}
+            </span>
+          )}
+        </div>
       </div>
       <p className="text-sm text-gray-500 italic">{result.interpretation}</p>
 

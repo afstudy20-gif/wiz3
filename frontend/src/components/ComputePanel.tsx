@@ -473,6 +473,34 @@ function RecodeTab({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<ComputeResult | null>(null);
 
+  // Cache of unique values per column (fetched on demand)
+  const [colValues, setColValues] = useState<Record<string, string[]>>({});
+  const fetchingRef = useRef<Set<string>>(new Set());
+
+  const ensureValues = (colName: string) => {
+    if (colValues[colName] || fetchingRef.current.has(colName)) return;
+    fetchingRef.current.add(colName);
+    getUniqueValues(sessionId, colName)
+      .then((r) => {
+        const vals: (string | number | null)[] = r.data ?? [];
+        setColValues((prev) => ({
+          ...prev,
+          [colName]: vals
+            .filter((v) => v !== null && v !== undefined && v !== "")
+            .map(String)
+            .slice(0, 200), // cap at 200 so datalist stays snappy
+        }));
+      })
+      .catch(() => { /* ignore */ })
+      .finally(() => fetchingRef.current.delete(colName));
+  };
+
+  // Pre-fetch values for all currently-used columns
+  useEffect(() => {
+    const used = new Set(rules.flatMap((r) => r.conditions.map((c) => c.col)));
+    used.forEach(ensureValues);
+  }, [rules]); // eslint-disable-line
+
   const addRule = () =>
     setRules((r) => [...r, { conditions: [{ col: firstCol, op: "<", val: "" }], result: "" }]);
 
@@ -540,7 +568,10 @@ function RecodeTab({
                 <button onClick={() => removeRule(ri)} className="text-xs text-red-400 hover:text-red-600">✕ Remove</button>
               </div>
 
-              {rule.conditions.map((cond, ci) => (
+              {rule.conditions.map((cond, ci) => {
+                const listId = `dl-${ri}-${ci}-${cond.col}`;
+                const vals = colValues[cond.col] ?? [];
+                return (
                 <div key={ci} className="flex items-center gap-1.5 flex-wrap">
                   {ci > 0 && <span className="text-xs text-indigo-600 font-semibold w-8 text-center">AND</span>}
                   {ci === 0 && <span className="text-xs text-gray-400 w-8 text-center">IF</span>}
@@ -548,7 +579,10 @@ function RecodeTab({
                   <select
                     className="select text-xs flex-1 min-w-[100px]"
                     value={cond.col}
-                    onChange={(e) => updateCond(ri, ci, { col: e.target.value })}
+                    onChange={(e) => {
+                      updateCond(ri, ci, { col: e.target.value, val: "" });
+                      ensureValues(e.target.value);
+                    }}
                   >
                     {columns.map((c) => <option key={c.name}>{c.name}</option>)}
                   </select>
@@ -561,10 +595,15 @@ function RecodeTab({
                     {OPS.map((op) => <option key={op}>{op}</option>)}
                   </select>
 
+                  {/* Datalist gives dropdown suggestions but still allows free typing */}
+                  {vals.length > 0 && <datalist id={listId}>
+                    {vals.map((v) => <option key={v} value={v} />)}
+                  </datalist>}
                   <input
-                    className="select text-xs w-20 font-mono"
+                    className="select text-xs w-28 font-mono"
                     placeholder="value"
                     value={cond.val}
+                    list={vals.length > 0 ? listId : undefined}
                     onChange={(e) => updateCond(ri, ci, { val: e.target.value })}
                   />
 
@@ -572,7 +611,8 @@ function RecodeTab({
                     <button onClick={() => removeCond(ri, ci)} className="text-red-300 hover:text-red-500 text-xs">✕</button>
                   )}
                 </div>
-              ))}
+                );
+              })}
 
               {/* Add AND condition */}
               <button

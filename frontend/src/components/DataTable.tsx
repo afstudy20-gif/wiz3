@@ -31,10 +31,11 @@ export default function DataTable() {
   const [sortDir,     setSortDir]     = useState<SortDir>("asc");
   const [filters,     setFilters]     = useState<Record<string, string>>({});
   const [showFilters, setShowFilters] = useState(false);
-  const [editCell,     setEditCell]    = useState<{ rowIdx: number; col: string } | null>(null);
-  const [editValue,    setEditValue]   = useState("");
-  const [saving,       setSaving]      = useState(false);
-  const [showSaveMenu, setShowSaveMenu] = useState(false);
+  const [editCell,       setEditCell]      = useState<{ rowIdx: number; col: string } | null>(null);
+  const [editValue,      setEditValue]     = useState("");
+  const [saving,         setSaving]        = useState(false);
+  const [showSaveMenu,   setShowSaveMenu]  = useState(false);
+  const [showMissingOnly, setShowMissingOnly] = useState(false);
 
   const inputRef   = useRef<HTMLInputElement>(null);
   const saveMenuRef = useRef<HTMLDivElement>(null);
@@ -55,7 +56,7 @@ export default function DataTable() {
   }, [editCell]);
 
   useEffect(() => {
-    setSortCol(null); setFilters({});
+    setSortCol(null); setFilters({}); setShowMissingOnly(false);
   }, [session?.session_id]);
 
   if (!session) return null;
@@ -67,10 +68,36 @@ export default function DataTable() {
     [preview]
   );
 
+  // Per-column missing counts (computed once over full preview)
+  const missingCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const col of columns) {
+      counts[col.name] = preview.filter(
+        (row) => row[col.name] === null || row[col.name] === undefined || row[col.name] === ""
+      ).length;
+    }
+    return counts;
+  }, [preview, columns]);
+
+  const totalMissingRows = useMemo(
+    () => indexedRows.filter((row) =>
+      columns.some((col) => row[col.name] === null || row[col.name] === undefined || row[col.name] === "")
+    ).length,
+    [indexedRows, columns]
+  );
+
   const filtered = useMemo(() => {
     const hasFilters = Object.values(filters).some(Boolean);
-    if (!hasFilters) return indexedRows;
-    return indexedRows.filter((row) =>
+    let rows = indexedRows;
+
+    if (showMissingOnly) {
+      rows = rows.filter((row) =>
+        columns.some((col) => row[col.name] === null || row[col.name] === undefined || row[col.name] === "")
+      );
+    }
+
+    if (!hasFilters) return rows;
+    return rows.filter((row) =>
       columns.every((col) => {
         const f = filters[col.name];
         if (!f) return true;
@@ -79,7 +106,7 @@ export default function DataTable() {
         return String(cell).toLowerCase().includes(f.toLowerCase());
       })
     );
-  }, [indexedRows, filters, columns]);
+  }, [indexedRows, filters, columns, showMissingOnly]);
 
   const displayRows = useMemo(() => {
     if (!sortCol) return filtered;
@@ -191,6 +218,29 @@ export default function DataTable() {
               ✕ Clear {activeFilters} filter{activeFilters > 1 ? "s" : ""}
             </button>
           )}
+          {showMissingOnly && (
+            <button
+              onClick={() => setShowMissingOnly(false)}
+              className="text-xs text-amber-700 border border-amber-300 rounded-lg px-2.5 py-1 transition-colors bg-amber-50 hover:bg-amber-100"
+            >
+              ✕ Missing only
+            </button>
+          )}
+          {totalMissingRows > 0 && (
+            <button
+              onClick={() => setShowMissingOnly((v) => !v)}
+              title={`${totalMissingRows} rows have at least one missing value — click to show only those rows`}
+              className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors
+                ${showMissingOnly
+                  ? "bg-amber-100 text-amber-700 border-amber-400"
+                  : "text-amber-600 border-amber-300 bg-amber-50 hover:bg-amber-100"}`}
+            >
+              ⚠ Missing
+              <span className={`text-[9px] font-bold rounded-full px-1.5 py-0.5 ${showMissingOnly ? "bg-amber-600 text-white" : "bg-amber-200 text-amber-800"}`}>
+                {totalMissingRows}
+              </span>
+            </button>
+          )}
           <button
             onClick={() => setShowFilters((v) => !v)}
             className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors
@@ -265,6 +315,7 @@ export default function DataTable() {
               </th>
               {columns.map((col) => {
                 const isSorted = sortCol === col.name;
+                const nMissing = missingCounts[col.name] ?? 0;
                 return (
                   <th key={col.name} className="px-2 py-2 border-r border-gray-200 min-w-[130px] max-w-[200px]">
                     <div className="flex items-center gap-1 justify-between">
@@ -279,6 +330,18 @@ export default function DataTable() {
                         <span className="text-left text-gray-700 text-xs font-medium truncate">
                           {col.name}
                         </span>
+                        {nMissing > 0 && (
+                          <button
+                            onClick={() => {
+                              setShowMissingOnly(true);
+                              setFilters((prev) => ({ ...prev, [col.name]: "" }));
+                            }}
+                            title={`${nMissing} missing values — click to filter`}
+                            className="flex-shrink-0 text-[9px] font-semibold px-1 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-300 hover:bg-amber-200 transition-colors"
+                          >
+                            {nMissing}✕
+                          </button>
+                        )}
                       </div>
                       <button
                         onClick={() => toggleSort(col.name)}
@@ -341,7 +404,9 @@ export default function DataTable() {
                         className={`border-r border-gray-200 font-mono text-xs transition-colors
                           ${isEditing
                             ? "p-0 bg-indigo-50"
-                            : "px-3 py-1.5 cursor-pointer hover:bg-indigo-50/50"}`}
+                            : isNull
+                              ? "px-3 py-1.5 cursor-pointer bg-amber-50/60 hover:bg-amber-100/60"
+                              : "px-3 py-1.5 cursor-pointer hover:bg-indigo-50/50"}`}
                       >
                         {isEditing ? (
                           <input
@@ -356,7 +421,7 @@ export default function DataTable() {
                             onBlur={commitEdit}
                           />
                         ) : isNull ? (
-                          <span className="text-gray-300 italic text-[10px]">null</span>
+                          <span className="text-amber-400 italic text-[10px] font-medium">null</span>
                         ) : (
                           <span className={col.kind === "numeric" ? "text-gray-700" : "text-gray-600"}>
                             {String(cellVal)}

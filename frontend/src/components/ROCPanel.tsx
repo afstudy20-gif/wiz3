@@ -337,10 +337,12 @@ export default function ROCPanel() {
     URL.revokeObjectURL(url);
   };
 
-  const exportPNG = (filename: string) => {
-    if (!rocPlotRef.current) return;
-    (window as any).Plotly?.downloadImage(rocPlotRef.current, {
-      format: "png", width: 900, height: 700, filename,
+  const exportPNG = async (filename: string) => {
+    const el: HTMLElement | null = rocPlotRef.current?.el ?? rocPlotRef.current;
+    if (!el) return;
+    const Plotly = (await import("plotly.js")).default;
+    await (Plotly as any).downloadImage(el, {
+      format: "png", width: 1200, height: 700, scale: 3.125, filename,
     });
   };
 
@@ -476,7 +478,7 @@ export default function ROCPanel() {
                     </button>
                     <button onClick={() => exportPNG(`ROC_${scoreCol}_vs_${outcomeCol}`)}
                       className="px-2 py-1 rounded text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 border border-gray-300">
-                      ↓ PNG
+                      ↓ PNG 300dpi
                     </button>
                   </div>
                 </div>

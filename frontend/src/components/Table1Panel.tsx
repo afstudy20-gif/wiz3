@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useStore } from "../store";
 import api from "../api";
+import ResultExporter from "./ResultExporter";
 
 // ── Stat definitions ──────────────────────────────────────────────────────────
 
@@ -218,46 +219,39 @@ export default function Table1Panel() {
     } finally { setLoading(false); }
   };
 
-  const exportCSV = () => {
-    if (!result) return;
+  const buildExportData = () => {
+    if (!result) return { headers: [] as string[], rows: [] as string[][] };
     const gl = result.group_labels;
     const headers = ["Variable", "Statistic",
       `Overall (n=${result.total_n})`,
       ...gl.map((g) => `${result.group_column ? result.group_column + "=" : ""}${g} (n=${result.group_ns[g] ?? ""})`),
       "p-value", "Test", "Normality test"];
-    const lines: string[][] = [headers];
-
-    result.rows.forEach((row) => {
+    const rows: string[][] = [];
+    result.rows.forEach((row: any) => {
       if (row.type === "numeric") {
-        (row.stat_rows ?? []).forEach((sr, i) => {
-          lines.push([
+        (row.stat_rows ?? []).forEach((sr: any, i: number) => {
+          rows.push([
             i === 0 ? row.variable : "",
             sr.label, sr.overall,
-            ...gl.map((g) => sr.group_stats[g] ?? ""),
+            ...gl.map((g: string) => sr.group_stats[g] ?? ""),
             i === 0 ? (row.p_value ?? "") : "",
             i === 0 ? (row.test ?? "") : "",
             i === 0 ? `${row.normality_test} (p=${row.normality_p})` : "",
           ]);
         });
       } else {
-        lines.push([row.variable, "n (%)", `n=${row.overall_n}`,
+        rows.push([row.variable, "n (%)", `n=${row.overall_n}`,
           ...gl.map(() => ""), row.p_value ?? "", row.test ?? "", ""]);
-        (row.sub_rows ?? []).forEach((sr) => {
-          lines.push([`  ${sr.category}`, "", sr.overall,
-            ...gl.map((g) => sr.group_stats[g] ?? ""), "", "", ""]);
+        (row.sub_rows ?? []).forEach((sr: any) => {
+          rows.push([`  ${sr.category}`, "", sr.overall,
+            ...gl.map((g: string) => sr.group_stats[g] ?? ""), "", "", ""]);
         });
       }
     });
-
-    const csv = lines.map((r) =>
-      r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")
-    ).join("\n");
-    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "table1.csv";
-    a.click();
+    return { headers, rows };
   };
+
+  const { headers: exportHeaders, rows: exportRows } = buildExportData();
 
   const filteredCols = allCols.filter(
     (c) => c !== groupCol && c.toLowerCase().includes(search.toLowerCase())
@@ -372,10 +366,11 @@ export default function Table1Panel() {
             {loading ? "Computing…" : "Generate Table 1"}
           </button>
           {result && (
-            <button onClick={exportCSV}
-              className="w-full text-xs text-indigo-600 hover:text-indigo-700 border border-gray-300 rounded-lg py-1.5 transition-colors hover:bg-gray-50">
-              ↓ Export CSV
-            </button>
+            <ResultExporter
+              title="Table1"
+              headers={exportHeaders}
+              rows={exportRows}
+            />
           )}
           {error && (
             <p className="text-red-500 text-xs bg-red-50 rounded p-2 leading-relaxed">{error}</p>

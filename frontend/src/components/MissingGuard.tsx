@@ -46,21 +46,25 @@ interface MissingGuardProps {
 const STRATEGIES: {
   value: ImputationStrategy;
   label: string;
+  desc: string;
   tip: string;
 }[] = [
   {
     value: "listwise",
     label: "Listwise deletion",
+    desc: "Removes every row with any missing value. Default in R/SPSS. Unbiased when data are missing completely at random (MCAR), but shrinks sample size.",
     tip: "Drop every row that has at least one missing value in the selected columns. R and SPSS default. Safe but reduces sample size.",
   },
   {
     value: "median",
     label: "Median imputation",
+    desc: "Fills each missing cell with its column median. Robust to outliers — preferred for skewed clinical variables (Troponin, CRP, BMI). Fast, but underestimates variance.",
     tip: "Replace missing values with the column median. Recommended for skewed clinical variables (e.g. Troponin, CRP) because the median is not affected by extreme outliers.",
   },
   {
     value: "mice",
     label: "MICE",
+    desc: "Multiple Imputation by Chained Equations. Predicts each missing value from all other variables using regression — statistically rigorous and minimises bias. Slower; falls back to median if it fails.",
     tip: "Multiple Imputation by Chained Equations. Predicts each missing value from all other columns using regression. Most accurate but slowest. Falls back to median if it fails.",
   },
 ];
@@ -176,11 +180,14 @@ export function MissingGuard({
               value={s.value}
               checked={imputation === s.value}
               onChange={() => onImputation(s.value)}
-              className="mt-0.5 accent-indigo-600"
+              className="mt-0.5 accent-indigo-600 flex-shrink-0"
             />
-            <span className="text-xs text-gray-700 group-hover:text-gray-900 leading-snug">
-              <span className="font-medium">{s.label}</span>
+            <span className="text-xs leading-snug">
+              <span className="font-medium text-gray-800 group-hover:text-gray-900">{s.label}</span>
               <Tip text={s.tip} wide />
+              {imputation === s.value && (
+                <p className="text-[10px] text-gray-500 mt-0.5 leading-relaxed">{s.desc}</p>
+              )}
             </span>
           </label>
         ))}
