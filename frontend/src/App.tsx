@@ -1,6 +1,6 @@
 import "./index.css";
 import { Component, useState, type ReactNode } from "react";
-import { FileSpreadsheet, BarChart2, Table2, FlaskConical, GitMerge, Brain, X, TrendingUp, ClipboardList, Zap, Calculator, Grid3x3, Grid2x2, Shapes, FolderOpen } from "lucide-react";
+import { BarChart2, Table2, FlaskConical, GitMerge, Brain, X, TrendingUp, ClipboardList, Zap, Calculator, Grid3x3, Grid2x2, Shapes, FolderOpen, Target } from "lucide-react";
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
   state = { error: null };
@@ -27,12 +27,13 @@ import ROCPanel from "./components/ROCPanel";
 import Table1Panel from "./components/Table1Panel";
 import PowerPanel from "./components/PowerPanel";
 import ComputePanel from "./components/ComputePanel";
+import PSMPanel from "./components/PSMPanel";
 import PlotThemeBar from "./components/PlotThemeBar";
 
 const TABS = [
   { id: "data",        label: "Data",        icon: Table2 },
   { id: "summary",     label: "Summary",     icon: BarChart2 },
-  { id: "table1",      label: "Table 1",     icon: ClipboardList },
+  { id: "table1",      label: "Table",       icon: ClipboardList },
   { id: "hypothesis",  label: "Hypothesis",  icon: FlaskConical },
   { id: "correlation", label: "Correlation", icon: GitMerge },
   { id: "roc",         label: "ROC",         icon: TrendingUp },
@@ -40,6 +41,7 @@ const TABS = [
   { id: "visual",      label: "Visual",      icon: Shapes },
   { id: "power",       label: "Power",       icon: Zap },
   { id: "compute",     label: "Compute",     icon: Calculator },
+  { id: "psm",         label: "PSM",         icon: Target },
   { id: "charts",      label: "Charts",      icon: BarChart2 },
 ];
 
@@ -170,10 +172,8 @@ export default function App() {
         {/* Row 1: logo · filename · actions */}
         <div className="flex items-center gap-3 px-4 pt-2 pb-1.5">
           <div className="flex items-center gap-2 flex-shrink-0">
-            <div className="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center">
-              <FileSpreadsheet size={14} className="text-white" />
-            </div>
-            <span className="font-bold text-gray-900 text-sm tracking-tight">YuStat</span>
+            <img src="/favicon.svg" alt="uStat logo" className="w-7 h-7 rounded-lg" />
+            <span className="font-bold text-gray-900 text-sm tracking-tight">uStat</span>
           </div>
 
           <div className="flex items-center gap-1 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 min-w-0 max-w-xs">
@@ -241,6 +241,7 @@ export default function App() {
           {activeTab === "visual"      && <div className="flex-1 p-4 overflow-y-auto"><VisualModelPanel /></div>}
           {activeTab === "power"       && <div className="flex-1 p-4 overflow-y-auto"><PowerPanel /></div>}
           {activeTab === "compute"     && <div className="flex-1 p-4 overflow-y-auto"><ComputePanel /></div>}
+          {activeTab === "psm"         && <div className="flex-1 p-4 overflow-y-auto"><PSMPanel /></div>}
           {activeTab === "charts"      && <div className="flex-1 p-4 overflow-y-auto"><ChartsPanel /></div>}
         </ErrorBoundary>
       </main>

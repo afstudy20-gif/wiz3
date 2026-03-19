@@ -2,8 +2,9 @@ import { useState } from "react";
 import Plot from "../PlotComponent";
 import { runPower } from "../api";
 import { useStore } from "../store";
+import { Tip } from "./Tip";
 
-// ── Types ───────────────────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────────────────
 
 type TestId   = "t_two" | "t_one" | "anova" | "correlation" | "proportion" | "chi2";
 type SolveFor = "n" | "power" | "effect_size";
@@ -11,51 +12,36 @@ type SolveFor = "n" | "power" | "effect_size";
 interface CurvePoint { n: number; power: number }
 interface PowerResult { result: number | null; label: string; curve: CurvePoint[] }
 
-// ── Tooltip helper ───────────────────────────────────────────────────────────
-import { Tip } from "./Tip";
-
-// ── Constants ────────────────────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
 
 const TESTS: {
-  id: TestId; label: string; desc: string; effectLabel: string;
+  id: TestId; label: string; short: string; desc: string; effectLabel: string;
   hasRatio: boolean; hasGroups: boolean; hasTails: boolean; isProportions: boolean;
 }[] = [
-  {
-    id: "t_two", label: "Independent t-test",
-    desc: "Compare the average of two separate groups — e.g. treatment vs. control.",
-    effectLabel: "Cohen's d", hasRatio: true, hasGroups: false, hasTails: true, isProportions: false,
-  },
-  {
-    id: "t_one", label: "One-sample / Paired t-test",
-    desc: "Compare one group to a fixed value, or paired measurements (before vs. after).",
-    effectLabel: "Cohen's d", hasRatio: false, hasGroups: false, hasTails: true, isProportions: false,
-  },
-  {
-    id: "anova", label: "One-way ANOVA",
-    desc: "Compare means across three or more groups at the same time.",
-    effectLabel: "Cohen's f", hasRatio: false, hasGroups: true, hasTails: false, isProportions: false,
-  },
-  {
-    id: "correlation", label: "Pearson correlation",
+  { id: "t_two",       label: "Independent t-test",        short: "t-test (2-grp)",
+    desc: "Compare means of two independent groups (e.g. treatment vs. control).",
+    effectLabel: "Cohen's d", hasRatio: true,  hasGroups: false, hasTails: true,  isProportions: false },
+  { id: "t_one",       label: "One-sample / Paired t-test", short: "t-test (1-grp)",
+    desc: "One group vs. a fixed value, or paired measurements (before/after).",
+    effectLabel: "Cohen's d", hasRatio: false, hasGroups: false, hasTails: true,  isProportions: false },
+  { id: "anova",       label: "One-way ANOVA",              short: "ANOVA",
+    desc: "Compare means across three or more groups simultaneously.",
+    effectLabel: "Cohen's f", hasRatio: false, hasGroups: true,  hasTails: false, isProportions: false },
+  { id: "correlation", label: "Pearson correlation",        short: "Correlation",
     desc: "Detect a linear relationship between two continuous variables.",
-    effectLabel: "Pearson r", hasRatio: false, hasGroups: false, hasTails: true, isProportions: false,
-  },
-  {
-    id: "proportion", label: "Two proportions (z-test)",
-    desc: "Compare event rates or percentages between two groups (e.g. recovery rates).",
-    effectLabel: "Cohen's h", hasRatio: true, hasGroups: false, hasTails: true, isProportions: true,
-  },
-  {
-    id: "chi2", label: "Chi-square test",
-    desc: "Test whether two categorical variables are associated (e.g. gender × diagnosis).",
-    effectLabel: "Cohen's w", hasRatio: false, hasGroups: true, hasTails: false, isProportions: false,
-  },
+    effectLabel: "Pearson r", hasRatio: false, hasGroups: false, hasTails: true,  isProportions: false },
+  { id: "proportion",  label: "Two proportions (z-test)",   short: "Proportions",
+    desc: "Compare event rates or percentages between two groups.",
+    effectLabel: "Cohen's h", hasRatio: true,  hasGroups: false, hasTails: true,  isProportions: true  },
+  { id: "chi2",        label: "Chi-square test",            short: "Chi-square",
+    desc: "Test association between two categorical variables.",
+    effectLabel: "Cohen's w", hasRatio: false, hasGroups: true,  hasTails: false, isProportions: false },
 ];
 
-const SOLVE_OPTS: { id: SolveFor; label: string; desc: string }[] = [
-  { id: "n",           label: "Sample size (n)",  desc: "How many participants do I need?" },
-  { id: "power",       label: "Power (1−β)",       desc: "What are my chances of finding a real effect?" },
-  { id: "effect_size", label: "Effect size",        desc: "What is the smallest effect I can detect?" },
+const SOLVE_OPTS: { id: SolveFor; label: string; icon: string; desc: string }[] = [
+  { id: "n",           icon: "👥", label: "Sample size (n)",   desc: "How many participants do I need?" },
+  { id: "power",       icon: "⚡", label: "Power (1−β)",        desc: "What are my chances of detecting a real effect?" },
+  { id: "effect_size", icon: "📏", label: "Effect size",         desc: "What is the smallest detectable effect?" },
 ];
 
 const PRESETS: Record<string, [number, number, number]> = {
@@ -71,38 +57,37 @@ const COHEN_TABLE = [
   { effect: "Cohen's h  (props.)",   small: 0.20, medium: 0.50, large: 0.80 },
 ];
 
-const TIP_TEXTS = {
-  alpha: "The false-positive rate — the probability of concluding there is an effect when there isn't one. α = 0.05 (5%) is the standard in most fields. A stricter value (0.01) reduces false alarms but requires a larger sample.",
-  power: "The probability of detecting a real effect if one truly exists. Power = 0.80 means an 80% chance of getting a significant result. The 80% threshold is the widely accepted minimum; 90% is preferred for confirmatory studies.",
-  d:     "Cohen's d measures how far apart two group means are in standard-deviation units. d = 0.5 means the means differ by half a standard deviation. If unsure, use the Small/Medium/Large presets from Cohen (1988).",
-  f:     "Cohen's f measures how spread out group means are in ANOVA, relative to within-group variability. f = 0.25 is a medium effect — noticeable but not dramatic.",
-  r:     "Pearson r is the correlation coefficient (0 = no relationship, 1 = perfect). r = 0.3 means about 9% of variance in one variable is explained by the other.",
-  w:     "Cohen's w measures departure from expected cell counts in a chi-square table. The Small/Medium/Large cutoffs are the same as for most other measures.",
-  p1p2:  "Enter the expected proportion (probability or percentage) in each group. Example: if 40% of controls recover and you expect 60% in the treatment group, set p₁ = 0.40, p₂ = 0.60. A bigger difference between p₁ and p₂ means a smaller sample is needed.",
-  n:     "Number of participants per group. For two-group designs the total N = n × (1 + ratio). Equal group sizes (ratio = 1) give the best efficiency per participant.",
-  tails: "Two-tailed: checks for effects in both directions (A > B or A < B) — appropriate for most research questions. One-tailed: checks only one direction and needs fewer participants, but should only be used when you can rule out the opposite direction.",
-  ratio: "The ratio of group 2 size to group 1 size. Use 1.0 for equal groups (most efficient). A ratio of 2.0 means group 2 has twice as many participants.",
-  groups:"The number of groups being compared. More groups require a larger total sample.",
-  cats:  "The number of categories (cells) in the chi-square table. For a 2 × 2 association table, enter 2 (degrees of freedom = 1). For a 3-category variable, enter 3.",
+const TIPS = {
+  alpha:  "The false-positive rate — probability of a significant result when no true effect exists. α = 0.05 (5%) is the worldwide standard. Stricter (0.01) reduces false alarms but needs more participants.",
+  power:  "The probability of detecting a real effect. 80% is the minimum standard (you'd still miss 1 in 5 real effects). 90% is preferred for confirmatory or clinical trials.",
+  d:      "Cohen's d = difference between group means ÷ pooled SD. d = 0.5 means means are half a SD apart. Use Small/Medium/Large if you have no prior estimate.",
+  f:      "Cohen's f measures spread of group means in ANOVA relative to within-group variability. f = 0.25 is a medium effect — detectable but not dramatic.",
+  r:      "Pearson r is the correlation coefficient. r = 0.3 means ~9% shared variance. r = 0.5 is a large, clinically meaningful correlation.",
+  w:      "Cohen's w measures departure from expected frequencies in a chi-square table. Same Small/Medium/Large cutoffs as most other measures.",
+  p1p2:   "Enter expected event rates in each group. Larger difference between p₁ and p₂ = smaller sample needed. Example: 30% controls vs 50% treated → enter 0.30 and 0.50.",
+  n:      "Participants per group. Total N = n × (1 + ratio) for two-group designs. Equal groups (ratio = 1) give the best statistical efficiency.",
+  tails:  "Two-tailed tests for effects in either direction (A > B or A < B) — use by default. One-tailed tests assume a direction in advance and need fewer participants, but require strong justification.",
+  ratio:  "Size of group 2 relative to group 1. Ratio = 1 means equal groups (most efficient). Ratio = 2 means group 2 is twice as large.",
+  groups: "Number of groups compared. More groups → more total participants needed to maintain 80% power.",
+  cats:   "Number of categories in the chi-square table. A 2×2 table → 2 categories (df = 1). A 3-level variable → 3 categories.",
 };
 
 const BASE_LAYOUT = {
   paper_bgcolor: "transparent",
   plot_bgcolor:  "#f9fafb",
   font:   { color: "#374151", size: 11 },
-  margin: { t: 20, r: 20, b: 52, l: 56 },
+  margin: { t: 12, r: 20, b: 48, l: 52 },
   xaxis:  { gridcolor: "#e5e7eb" },
   yaxis:  { gridcolor: "#e5e7eb", range: [0, 1.05], title: { text: "Power (1−β)" } },
 };
 
-// ── Plain-English interpretation ─────────────────────────────────────────────
+// ── Plain-English result text ──────────────────────────────────────────────────
 
 function plainEnglish(
   test: TestId, solveFor: SolveFor, resultVal: number,
   { alpha, power, effectSize, n, p1, p2, testInfo }: {
     alpha: string; power: string; effectSize: string; n: string;
-    p1: string; p2: string;
-    testInfo: typeof TESTS[0];
+    p1: string; p2: string; testInfo: typeof TESTS[0];
   }
 ): string {
   const pct   = (x: string | number) => `${(parseFloat(String(x)) * 100).toFixed(0)}%`;
@@ -112,32 +97,30 @@ function plainEnglish(
     ? (es <= presets[0] ? "small" : es <= presets[1] ? "small-to-medium" : es < presets[2] ? "medium" : "large")
     : "specified";
   const perGrp = testInfo.hasRatio || testInfo.hasGroups;
-
   const effectDesc = testInfo.isProportions
     ? `a difference of ${parseFloat(p1) * 100}% vs ${parseFloat(p2) * 100}%`
     : `a ${size} effect (${testInfo.effectLabel} = ${es})`;
 
   if (solveFor === "n") {
     const nCeil = Math.ceil(resultVal);
-    const perStr = perGrp ? " per group" : "";
-    return `To detect ${effectDesc} with ${pct(power)} probability at α = ${alpha}, you need ${nCeil}${perStr}. If the true effect is this size, you have a ${pct(power)} chance of getting a statistically significant result.`;
+    return `To detect ${effectDesc} with ${pct(power)} power at α = ${alpha}, you need ${nCeil}${perGrp ? " per group" : ""}. If the true effect is this size or larger, your study has a ${pct(power)} chance of reaching statistical significance.`;
   }
   if (solveFor === "power") {
     const pctVal = (resultVal * 100).toFixed(1);
-    const perStr = perGrp ? ` per group` : "";
     if (resultVal >= 0.80)
-      return `With ${n}${perStr}, you have a ${pctVal}% chance of detecting ${effectDesc} — above the 80% threshold. The study is adequately powered.`;
-    return `With only ${n}${perStr}, you have a ${pctVal}% chance of detecting ${effectDesc}. This is below the recommended 80% — increasing sample size will reduce the risk of a false negative.`;
+      return `With ${n}${perGrp ? " per group" : ""}, you have a ${pctVal}% chance of detecting ${effectDesc}. This exceeds the 80% threshold — the study is adequately powered.`;
+    if (resultVal >= 0.50)
+      return `With ${n}${perGrp ? " per group" : ""}, your power is only ${pctVal}% for ${effectDesc}. This is below the 80% minimum — you would miss this effect about 1 in ${Math.round(1/(1-resultVal))} times.`;
+    return `With only ${n}${perGrp ? " per group" : ""}, power is ${pctVal}% — severely underpowered for ${effectDesc}. You would miss this effect more than half the time. Increase sample size.`;
   }
-  // effect_size
-  const perStr = perGrp ? ` per group` : "";
-  return `With ${n}${perStr} and ${pct(power)} power at α = ${alpha}, effects smaller than ${resultVal.toFixed(3)} (${testInfo.effectLabel}) will likely go undetected. If you expect a smaller true effect, you need more participants.`;
+  return `With ${n}${perGrp ? " per group" : ""} and ${pct(power)} power at α = ${alpha}, effects smaller than ${resultVal.toFixed(3)} (${testInfo.effectLabel}) will likely go undetected. If you expect a smaller true effect, recruit more participants.`;
 }
 
-// ── Component ────────────────────────────────────────────────────────────────
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export default function PowerPanel() {
   const showGrid = useStore((s) => s.showGrid);
+
   const [test,       setTest]       = useState<TestId>("t_two");
   const [solveFor,   setSolveFor]   = useState<SolveFor>("n");
   const [alpha,      setAlpha]      = useState("0.05");
@@ -158,24 +141,22 @@ export default function PowerPanel() {
   const presets  = PRESETS[test];
 
   const effectTip: Record<TestId, string> = {
-    t_two: TIP_TEXTS.d, t_one: TIP_TEXTS.d,
-    anova: TIP_TEXTS.f, correlation: TIP_TEXTS.r,
-    proportion: TIP_TEXTS.p1p2, chi2: TIP_TEXTS.w,
+    t_two: TIPS.d, t_one: TIPS.d, anova: TIPS.f,
+    correlation: TIPS.r, proportion: TIPS.p1p2, chi2: TIPS.w,
   };
 
-  // ── Calculate ───────────────────────────────────────────────────────────────
+  // ── Calculate ────────────────────────────────────────────────────────────────
 
   const calculate = async () => {
     setLoading(true); setError(null);
     try {
       const payload: Record<string, unknown> = {
         test, solve_for: solveFor,
-        alpha:    parseFloat(alpha)   || 0.05,
-        tails:    parseInt(tails)     || 2,
-        k_groups: parseInt(kGroups)   || 3,
-        ratio:    parseFloat(ratio)   || 1.0,
-        p1:       parseFloat(p1),
-        p2:       parseFloat(p2),
+        alpha:    parseFloat(alpha)  || 0.05,
+        tails:    parseInt(tails)    || 2,
+        k_groups: parseInt(kGroups)  || 3,
+        ratio:    parseFloat(ratio)  || 1.0,
+        p1: parseFloat(p1), p2: parseFloat(p2),
       };
       if (solveFor !== "n")            payload.n           = parseInt(n);
       if (solveFor !== "power")        payload.power       = parseFloat(power);
@@ -194,14 +175,13 @@ export default function PowerPanel() {
     } finally { setLoading(false); }
   };
 
-  const switchTest  = (id: TestId)   => { setTest(id);     setResult(null); setError(null); };
-  const switchSolve = (s: SolveFor)  => { setSolveFor(s);  setResult(null); setError(null); };
+  const switchTest  = (id: TestId)  => { setTest(id);    setResult(null); setError(null); };
+  const switchSolve = (s: SolveFor) => { setSolveFor(s); setResult(null); setError(null); };
 
-  // ── Plot ────────────────────────────────────────────────────────────────────
+  // ── Plot data ────────────────────────────────────────────────────────────────
 
   const currentN = solveFor === "n" && result?.result
-    ? Math.ceil(result.result)
-    : parseInt(n) || 0;
+    ? Math.ceil(result.result) : parseInt(n) || 0;
   const xLabel = (testInfo.hasRatio || testInfo.hasGroups) ? "n per group" : "Sample size (n)";
 
   const plotTraces: object[] = result?.curve.length ? [
@@ -231,85 +211,92 @@ export default function PowerPanel() {
     });
   }
 
-  // ── Helpers ─────────────────────────────────────────────────────────────────
+  // ── Style helpers ────────────────────────────────────────────────────────────
 
   const inputCls = (disabled: boolean) =>
-    `w-full rounded-lg border px-2.5 py-1.5 text-sm transition-colors focus:outline-none focus:border-indigo-400 ${
+    `w-full rounded-lg border px-3 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 ${
       disabled
         ? "bg-indigo-50 border-indigo-300 text-indigo-700 font-semibold cursor-not-allowed"
         : "bg-white border-gray-300 text-gray-900"}`;
 
   const chipCls = (active: boolean) =>
-    `flex-1 text-xs py-1 rounded border transition-colors select-none cursor-pointer ${
-      active ? "bg-indigo-100 text-indigo-700 border-indigo-300 font-medium"
-             : "text-gray-500 border-gray-300 hover:bg-gray-50"}`;
+    `flex-1 text-xs py-1.5 rounded-lg border transition-colors select-none cursor-pointer text-center ${
+      active ? "bg-indigo-600 text-white border-indigo-600 font-medium shadow-sm"
+             : "text-gray-500 border-gray-200 hover:border-indigo-300 hover:text-indigo-600 bg-white"}`;
 
-  const LabelTip = ({ children, tip, wide }: { children: string; tip: string; wide?: boolean }) => (
-    <label className="text-xs text-gray-400 flex items-center mb-1">
-      {children}<Tip text={tip} wide={wide} />
-    </label>
-  );
+  const powerColor = (pwr: number) =>
+    pwr >= 0.80 ? "text-emerald-600" : pwr >= 0.50 ? "text-amber-600" : "text-red-500";
+  const powerBg = (pwr: number) =>
+    pwr >= 0.80 ? "bg-emerald-50 border-emerald-200" : pwr >= 0.50 ? "bg-amber-50 border-amber-200" : "bg-red-50 border-red-200";
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex gap-4">
+    <div className="max-w-5xl mx-auto space-y-4">
 
-      {/* ── Left sidebar ──────────────────────────────────────────────────── */}
-      <div className="w-[17rem] flex-shrink-0 space-y-3">
-
-        {/* Test picker */}
-        <div className="panel space-y-1">
-          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Statistical Test</h3>
+      {/* ── Test selector ── */}
+      <div className="panel space-y-3">
+        <div className="flex items-center gap-2 mb-1">
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Statistical Test</h3>
+          <Tip wide text="Choose the test that matches your study design. Your choice determines which formula is used to compute the sample size or power." />
+        </div>
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
           {TESTS.map((t) => (
-            <label key={t.id} className="flex items-start gap-2 cursor-pointer group py-0.5">
-              <input type="radio" name="power-test" value={t.id}
-                checked={test === t.id} onChange={() => switchTest(t.id)}
-                className="accent-indigo-500 mt-0.5 flex-shrink-0" />
-              <div>
-                <span className={`text-sm leading-tight transition-colors ${test === t.id ? "text-indigo-700 font-medium" : "text-gray-700 group-hover:text-gray-900"}`}>
-                  {t.label}
-                </span>
-                {test === t.id && (
-                  <p className="text-[10px] text-gray-400 leading-snug mt-0.5">{t.desc}</p>
-                )}
-              </div>
-            </label>
+            <button key={t.id} onClick={() => switchTest(t.id)}
+              title={t.desc}
+              className={`px-2 py-2 rounded-xl border text-xs font-medium transition-all text-center leading-tight ${
+                test === t.id
+                  ? "bg-indigo-600 text-white border-indigo-600 shadow-md"
+                  : "bg-white border-gray-200 text-gray-600 hover:border-indigo-300 hover:text-indigo-700"
+              }`}>
+              {t.short}
+            </button>
           ))}
         </div>
+        {/* Active test description */}
+        <p className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
+          <span className="font-medium text-gray-700">{testInfo.label}:</span> {testInfo.desc}
+        </p>
+      </div>
+
+      {/* ── Solve-for + Parameters + Calculate ── */}
+      <div className="panel space-y-4">
 
         {/* Solve for */}
-        <div className="panel space-y-1">
-          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Solve For</h3>
-          {SOLVE_OPTS.map(({ id, label, desc }) => (
-            <label key={id} className="flex items-start gap-2 cursor-pointer group py-0.5">
-              <input type="radio" name="solve-for" value={id}
-                checked={solveFor === id} onChange={() => switchSolve(id)}
-                className="accent-indigo-500 mt-0.5 flex-shrink-0" />
-              <div>
-                <span className={`text-sm leading-tight transition-colors ${solveFor === id ? "text-indigo-700 font-medium" : "text-gray-700 group-hover:text-gray-900"}`}>
-                  {label}
-                </span>
-                {solveFor === id && (
-                  <p className="text-[10px] text-gray-400 leading-snug mt-0.5 italic">{desc}</p>
-                )}
-              </div>
-            </label>
-          ))}
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Solve For</h3>
+            <Tip text="Choose what you want to calculate. 'Sample size' is most common when planning a new study." />
+          </div>
+          <div className="flex gap-2">
+            {SOLVE_OPTS.map(({ id, icon, label, desc }) => (
+              <button key={id} onClick={() => switchSolve(id)}
+                className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 rounded-xl border transition-all ${
+                  solveFor === id
+                    ? "bg-indigo-600 text-white border-indigo-600 shadow-md"
+                    : "bg-white border-gray-200 text-gray-600 hover:border-indigo-300 hover:text-indigo-600"
+                }`}
+                title={desc}>
+                <span className="text-base">{icon}</span>
+                <span className="text-xs font-medium">{label}</span>
+              </button>
+            ))}
+          </div>
         </div>
 
-        {/* Parameters */}
-        <div className="panel space-y-3">
-          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Parameters</h3>
+        {/* Parameters grid */}
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
 
           {/* Effect size */}
           {testInfo.isProportions ? (
-            <div className="space-y-2">
-              <LabelTip tip={TIP_TEXTS.p1p2} wide>Proportions (p₁ and p₂)</LabelTip>
+            <div className="col-span-2 space-y-1">
+              <label className="text-xs font-medium text-gray-500 flex items-center gap-1">
+                Proportions (p₁ and p₂) <Tip text={TIPS.p1p2} wide />
+              </label>
               <div className="flex gap-2">
                 {([["p₁", p1, setP1], ["p₂", p2, setP2]] as const).map(([lbl, val, setter]) => (
                   <div key={lbl} className="flex-1">
-                    <p className="text-[10px] text-gray-400 mb-0.5">{lbl}</p>
+                    <p className="text-[10px] text-gray-400 mb-1">{lbl}</p>
                     <input type="number" min="0.01" max="0.99" step="0.01"
                       className={inputCls(solveFor === "effect_size")}
                       value={val} disabled={solveFor === "effect_size"}
@@ -319,23 +306,25 @@ export default function PowerPanel() {
               </div>
               {solveFor !== "effect_size" && (
                 <p className="text-[10px] text-gray-400">
-                  Cohen's h = {Math.abs(2 * Math.asin(Math.sqrt(parseFloat(p1) || 0)) - 2 * Math.asin(Math.sqrt(parseFloat(p2) || 0))).toFixed(3)}
+                  → Cohen's h = {Math.abs(2 * Math.asin(Math.sqrt(parseFloat(p1) || 0)) - 2 * Math.asin(Math.sqrt(parseFloat(p2) || 0))).toFixed(3)}
                 </p>
               )}
             </div>
           ) : (
-            <div>
-              <LabelTip tip={effectTip[test]}>{`Effect size (${testInfo.effectLabel})`}</LabelTip>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-gray-500 flex items-center gap-1">
+                Effect size ({testInfo.effectLabel}) <Tip text={effectTip[test]} wide />
+              </label>
               <input type="number" min="0.001" step="0.01"
                 className={inputCls(solveFor === "effect_size")}
                 value={effectSize} disabled={solveFor === "effect_size"}
                 onChange={(e) => setEffectSize(e.target.value)} />
               {presets && solveFor !== "effect_size" && (
-                <div className="flex gap-1 mt-1.5">
+                <div className="flex gap-1 mt-1">
                   {(["Small", "Medium", "Large"] as const).map((s, i) => (
                     <button key={s} onClick={() => setEffectSize(String(presets[i]))}
                       className={chipCls(parseFloat(effectSize) === presets[i])}>
-                      {s}<br /><span className="text-[9px] opacity-60">{presets[i]}</span>
+                      {s} <span className="opacity-60 text-[9px]">({presets[i]})</span>
                     </button>
                   ))}
                 </div>
@@ -343,11 +332,11 @@ export default function PowerPanel() {
             </div>
           )}
 
-          {/* n */}
-          <div>
-            <LabelTip tip={TIP_TEXTS.n}>
-              {`Sample size (n${testInfo.hasRatio || testInfo.hasGroups ? " per group" : ""})`}
-            </LabelTip>
+          {/* Sample size */}
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-500 flex items-center gap-1">
+              {`n${testInfo.hasRatio || testInfo.hasGroups ? " per group" : ""}`} <Tip text={TIPS.n} wide />
+            </label>
             <input type="number" min="4" step="1"
               className={inputCls(solveFor === "n")}
               value={n} disabled={solveFor === "n"}
@@ -355,127 +344,159 @@ export default function PowerPanel() {
           </div>
 
           {/* Power */}
-          <div>
-            <LabelTip tip={TIP_TEXTS.power}>Power (1−β)</LabelTip>
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-500 flex items-center gap-1">
+              Power (1−β) <Tip text={TIPS.power} wide />
+            </label>
             <input type="number" min="0.01" max="0.999" step="0.01"
               className={inputCls(solveFor === "power")}
               value={power} disabled={solveFor === "power"}
               onChange={(e) => setPower(e.target.value)} />
+            {solveFor !== "power" && (
+              <div className="flex gap-1 mt-1">
+                {[["80%","0.80"],["90%","0.90"],["95%","0.95"]].map(([lbl, val]) => (
+                  <button key={val} onClick={() => setPower(val)}
+                    className={chipCls(power === val)}>{lbl}</button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Alpha */}
-          <div>
-            <LabelTip tip={TIP_TEXTS.alpha}>Significance level (α)</LabelTip>
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-500 flex items-center gap-1">
+              Alpha (α) <Tip text={TIPS.alpha} wide />
+            </label>
             <div className="flex gap-1">
-              {["0.01", "0.05", "0.10"].map((v) => (
+              {["0.01","0.05","0.10"].map((v) => (
                 <button key={v} onClick={() => setAlpha(v)} className={chipCls(alpha === v)}>{v}</button>
               ))}
             </div>
           </div>
-
-          {/* Tails */}
-          {testInfo.hasTails && (
-            <div>
-              <LabelTip tip={TIP_TEXTS.tails} wide>Tails</LabelTip>
-              <div className="flex gap-1">
-                {[["2", "Two-tailed"], ["1", "One-tailed"]].map(([v, l]) => (
-                  <button key={v} onClick={() => setTails(v)} className={chipCls(tails === v)}>{l}</button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Ratio */}
-          {testInfo.hasRatio && (
-            <div>
-              <LabelTip tip={TIP_TEXTS.ratio}>Allocation ratio (n₂ / n₁)</LabelTip>
-              <input type="number" min="0.1" step="0.1"
-                className="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm bg-white focus:outline-none focus:border-indigo-400"
-                value={ratio} onChange={(e) => setRatio(e.target.value)} />
-            </div>
-          )}
-
-          {/* Groups / bins */}
-          {testInfo.hasGroups && (
-            <div>
-              <LabelTip tip={test === "anova" ? TIP_TEXTS.groups : TIP_TEXTS.cats}>
-                {test === "anova" ? "Number of groups (k)" : "Number of categories"}
-              </LabelTip>
-              <input type="number" min="2" step="1"
-                className="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm bg-white focus:outline-none focus:border-indigo-400"
-                value={kGroups} onChange={(e) => setKGroups(e.target.value)} />
-            </div>
-          )}
         </div>
 
-        <button className="btn-primary w-full" onClick={calculate} disabled={loading}>
-          {loading ? "Calculating…" : "⚡ Calculate"}
+        {/* Secondary params row */}
+        {(testInfo.hasTails || testInfo.hasRatio || testInfo.hasGroups) && (
+          <div className="flex flex-wrap gap-4 pt-2 border-t border-gray-100">
+            {testInfo.hasTails && (
+              <div className="space-y-1 min-w-[160px]">
+                <label className="text-xs font-medium text-gray-500 flex items-center gap-1">
+                  Tails <Tip text={TIPS.tails} wide />
+                </label>
+                <div className="flex gap-1">
+                  {[["2","Two-tailed"],["1","One-tailed"]].map(([v,l]) => (
+                    <button key={v} onClick={() => setTails(v)} className={chipCls(tails === v)}>{l}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {testInfo.hasRatio && (
+              <div className="space-y-1 min-w-[120px]">
+                <label className="text-xs font-medium text-gray-500 flex items-center gap-1">
+                  Allocation ratio <Tip text={TIPS.ratio} wide />
+                </label>
+                <input type="number" min="0.1" step="0.1"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                  value={ratio} onChange={(e) => setRatio(e.target.value)} />
+              </div>
+            )}
+            {testInfo.hasGroups && (
+              <div className="space-y-1 min-w-[120px]">
+                <label className="text-xs font-medium text-gray-500 flex items-center gap-1">
+                  {test === "anova" ? "Groups (k)" : "Categories"} <Tip text={test === "anova" ? TIPS.groups : TIPS.cats} wide />
+                </label>
+                <input type="number" min="2" step="1"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                  value={kGroups} onChange={(e) => setKGroups(e.target.value)} />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Calculate button */}
+        <button
+          className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm transition-colors shadow-sm flex items-center justify-center gap-2"
+          onClick={calculate} disabled={loading}>
+          {loading
+            ? <><span className="animate-spin">⏳</span> Calculating…</>
+            : <><span>⚡</span> Calculate {SOLVE_OPTS.find(s => s.id === solveFor)?.label}</>}
         </button>
 
         {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 text-xs text-red-600">{error}</div>
+          <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-2.5 text-xs text-red-600">{error}</div>
         )}
       </div>
 
-      {/* ── Right panel ───────────────────────────────────────────────────── */}
-      <div className="flex-1 space-y-4 min-w-0">
+      {/* ── Result ── */}
+      {result ? (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
 
-        {result ? (
-          <>
-            {/* Result card */}
-            <div className="panel">
-              <div className="flex items-start gap-6">
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-gray-400 mb-0.5">Result</p>
-                  <p className="text-3xl font-bold text-indigo-600 leading-none">
-                    {solveFor === "n"
-                      ? Math.ceil(result.result ?? 0).toLocaleString()
-                      : result.result?.toFixed(4)}
-                  </p>
-                  <p className="text-sm text-gray-600 mt-2">{result.label}</p>
-                </div>
-                <div className="text-xs text-gray-400 space-y-0.5 text-right flex-shrink-0 bg-gray-50 rounded-lg px-3 py-2 border border-gray-200">
-                  <p><span className="text-gray-600 font-medium">α</span> = {alpha}</p>
-                  {solveFor !== "power" && <p><span className="text-gray-600 font-medium">Power</span> = {power}</p>}
-                  {solveFor !== "n"     && <p><span className="text-gray-600 font-medium">n</span> = {n}</p>}
-                  {!testInfo.isProportions && solveFor !== "effect_size" &&
-                    <p><span className="text-gray-600 font-medium">ES</span> = {effectSize}</p>}
-                  {testInfo.isProportions && <>
-                    <p><span className="text-gray-600 font-medium">p₁</span> = {p1}</p>
-                    <p><span className="text-gray-600 font-medium">p₂</span> = {p2}</p>
-                  </>}
-                </div>
+          {/* Result card + interpretation — 2 cols */}
+          <div className="lg:col-span-2 space-y-3">
+
+            {/* Big result number */}
+            <div className={`panel border ${
+              solveFor === "power" && result.result != null
+                ? powerBg(result.result)
+                : "border-indigo-200 bg-indigo-50"
+            }`}>
+              <div className="flex items-start justify-between mb-1">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  {SOLVE_OPTS.find(s => s.id === solveFor)?.label}
+                </p>
+                <span className="text-[10px] bg-white/60 border border-gray-200 rounded px-1.5 py-0.5 text-gray-500">
+                  {testInfo.short}
+                </span>
               </div>
+              <p className={`text-5xl font-black leading-none mb-1 ${
+                solveFor === "power" && result.result != null
+                  ? powerColor(result.result)
+                  : "text-indigo-700"
+              }`}>
+                {solveFor === "n"
+                  ? Math.ceil(result.result ?? 0).toLocaleString()
+                  : solveFor === "power"
+                    ? `${((result.result ?? 0) * 100).toFixed(1)}%`
+                    : result.result?.toFixed(4)}
+              </p>
+              <p className="text-sm text-gray-600">{result.label}</p>
 
-              {/* Power bar */}
+              {/* Power bar (only when solving for power) */}
               {solveFor === "power" && result.result != null && (
-                <div className="mt-4">
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-gray-400">0%</span>
-                    <span className={`font-semibold ${result.result >= 0.80 ? "text-emerald-600" : "text-orange-500"}`}>
-                      {(result.result * 100).toFixed(1)}%
-                      &nbsp;{result.result >= 0.80 ? "✓ Adequate" : "✗ Underpowered"}
-                    </span>
-                    <span className="text-gray-400">100%</span>
-                  </div>
-                  <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
+                <div className="mt-3">
+                  <div className="h-2.5 bg-white/60 rounded-full overflow-hidden border border-gray-200">
                     <div
-                      className={`h-full rounded-full transition-all duration-500 ${result.result >= 0.80 ? "bg-emerald-500" : "bg-orange-400"}`}
-                      style={{ width: `${Math.min(100, result.result * 100).toFixed(1)}%` }}
+                      className={`h-full rounded-full transition-all duration-700 ${
+                        result.result >= 0.80 ? "bg-emerald-500" : result.result >= 0.50 ? "bg-amber-400" : "bg-red-400"
+                      }`}
+                      style={{ width: `${Math.min(100, (result.result ?? 0) * 100).toFixed(1)}%` }}
                     />
                   </div>
-                  <div className="flex justify-end">
-                    <span className="text-[10px] text-gray-400 mt-0.5 mr-[18%]">← 80% target</span>
+                  <div className="flex justify-between text-[9px] text-gray-400 mt-0.5">
+                    <span>0%</span>
+                    <span className="text-red-400">80% target</span>
+                    <span>100%</span>
                   </div>
                 </div>
               )}
+
+              {/* Input summary */}
+              <div className="mt-3 pt-3 border-t border-white/40 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px]">
+                <span className="text-gray-500">α = <span className="text-gray-700 font-medium">{alpha}</span></span>
+                {solveFor !== "power"       && <span className="text-gray-500">Power = <span className="text-gray-700 font-medium">{(parseFloat(power)*100).toFixed(0)}%</span></span>}
+                {solveFor !== "n"           && <span className="text-gray-500">n = <span className="text-gray-700 font-medium">{n}</span></span>}
+                {!testInfo.isProportions && solveFor !== "effect_size" &&
+                  <span className="text-gray-500">ES = <span className="text-gray-700 font-medium">{effectSize}</span></span>}
+                {testInfo.isProportions     && <><span className="text-gray-500">p₁ = {p1}</span><span className="text-gray-500">p₂ = {p2}</span></>}
+                {testInfo.hasTails          && <span className="text-gray-500">{tails === "2" ? "Two-tailed" : "One-tailed"}</span>}
+              </div>
             </div>
 
             {/* Plain-English interpretation */}
             {result.result != null && (
-              <div className="bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 flex gap-3">
-                <span className="text-indigo-400 text-lg flex-shrink-0 mt-0.5">💬</span>
-                <p className="text-sm text-indigo-800 leading-relaxed">
+              <div className="rounded-xl border border-indigo-100 bg-white px-4 py-3 flex gap-3">
+                <span className="text-indigo-400 text-xl flex-shrink-0 mt-0.5">💬</span>
+                <p className="text-sm text-gray-700 leading-relaxed">
                   {plainEnglish(test, solveFor, result.result, {
                     alpha, power, effectSize, n, p1, p2, testInfo,
                   })}
@@ -483,125 +504,125 @@ export default function PowerPanel() {
               </div>
             )}
 
-            {/* Power curve */}
-            {result.curve.length > 0 && (
-              <div className="panel">
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-sm font-semibold text-gray-700">Power Curve</h4>
-                  <p className="text-[10px] text-gray-400">
-                    Each point shows the power you'd have at that sample size.
-                    The red dashed line marks the 80% threshold.
-                  </p>
-                </div>
-                <Plot
-                  data={plotTraces as any}
-                  layout={{
-                    ...BASE_LAYOUT,
-                    autosize: true, height: 290,
-                    xaxis: { ...BASE_LAYOUT.xaxis, showgrid: showGrid, title: { text: xLabel } },
-                    yaxis: { ...BASE_LAYOUT.yaxis, showgrid: showGrid },
-                    legend: { orientation: "h", y: -0.28, font: { size: 11 } },
-                    shapes: currentN ? [{
-                      type: "line", xref: "x", yref: "y",
-                      x0: currentN, x1: currentN, y0: 0, y1: 1,
-                      line: { color: "#6366f1", width: 1.5, dash: "dot" },
-                    }] : [],
-                  } as any}
-                  style={{ width: "100%", height: "100%" }}
-                  useResizeHandler
-                  config={{ responsive: true, displaylogo: false }}
-                />
-              </div>
-            )}
-
-            {/* Cohen's conventions */}
-            <div className="panel">
-              <h4 className="text-sm font-semibold text-gray-700 mb-1">Cohen's Effect-Size Conventions</h4>
-              <p className="text-[10px] text-gray-400 mb-2">
-                Use these benchmarks when you have no prior data to estimate the expected effect size.
-                Medium effects are the most common assumption for planning studies.
+            {/* Cohen conventions mini-table */}
+            <div className="panel space-y-2">
+              <p className="text-xs font-semibold text-gray-600 flex items-center gap-1">
+                Cohen's Effect-Size Conventions
+                <Tip text="Use these benchmarks when you have no prior data. Medium effects are the most common default in clinical research. Cohen, J. (1988). Statistical Power Analysis for the Behavioral Sciences (2nd ed.)." wide />
               </p>
-              <table className="w-full text-xs border-collapse">
+              <table className="w-full text-[10px] border-collapse">
                 <thead>
                   <tr className="border-b border-gray-200 text-gray-400">
-                    <th className="text-left py-1.5 font-medium">Measure</th>
-                    <th className="text-right py-1.5 font-medium">Small</th>
-                    <th className="text-right py-1.5 font-medium">Medium</th>
-                    <th className="text-right py-1.5 font-medium">Large</th>
+                    <th className="text-left py-1 font-medium">Measure</th>
+                    <th className="text-right py-1 font-medium text-amber-500">Small</th>
+                    <th className="text-right py-1 font-medium text-indigo-500">Medium ★</th>
+                    <th className="text-right py-1 font-medium text-emerald-600">Large</th>
                   </tr>
                 </thead>
                 <tbody>
                   {COHEN_TABLE.map((row) => (
-                    <tr key={row.effect} className="border-b border-gray-100">
-                      <td className="py-1.5 text-gray-600">{row.effect}</td>
-                      <td className="text-right py-1.5 font-mono text-gray-700">{row.small}</td>
-                      <td className="text-right py-1.5 font-mono text-gray-700">{row.medium}</td>
-                      <td className="text-right py-1.5 font-mono text-gray-700">{row.large}</td>
+                    <tr key={row.effect} className={`border-b border-gray-50 ${row.effect.includes(testInfo.effectLabel.split(" ")[0]) ? "bg-indigo-50/50" : ""}`}>
+                      <td className="py-0.5 text-gray-600 font-mono">{row.effect}</td>
+                      <td className="text-right py-0.5 font-mono text-gray-600">{row.small}</td>
+                      <td className="text-right py-0.5 font-mono font-semibold text-indigo-600">{row.medium}</td>
+                      <td className="text-right py-0.5 font-mono text-gray-600">{row.large}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              <p className="text-[10px] text-gray-400 mt-2">
-                Cohen, J. (1988). <em>Statistical Power Analysis for the Behavioral Sciences</em> (2nd ed.).
-              </p>
-            </div>
-          </>
-        ) : (
-          /* ── Empty state: mini-guide ──────────────────────────────────── */
-          <div className="space-y-4">
-            <div className="flex flex-col items-center gap-2 py-6 text-gray-500">
-              <div className="w-14 h-14 rounded-full bg-indigo-50 flex items-center justify-center text-2xl">⚡</div>
-              <p className="text-base font-semibold text-gray-700">Power Analysis</p>
-              <p className="text-sm text-gray-400 text-center max-w-sm">
-                Helps you plan studies so you have enough participants to detect a real effect — and avoid wasting resources on underpowered research.
-              </p>
-            </div>
-
-            {/* Concept cards */}
-            <div className="grid grid-cols-3 gap-3">
-              {[
-                {
-                  icon: "🎯", title: "Statistical Power",
-                  body: "The probability of detecting a real effect. Aim for ≥ 80%. A study with 50% power is like flipping a coin — you'd miss half of all real effects.",
-                },
-                {
-                  icon: "📏", title: "Effect Size",
-                  body: "How large the true difference is, measured in a standardized unit. If you don't have prior estimates, Cohen's Small / Medium / Large presets are a safe starting point.",
-                },
-                {
-                  icon: "🚦", title: "Significance (α)",
-                  body: "The false-positive rate. α = 0.05 means you accept a 5% chance of declaring an effect that doesn't exist. Lower α reduces false positives but requires more participants.",
-                },
-              ].map(({ icon, title, body }) => (
-                <div key={title} className="panel flex flex-col gap-2">
-                  <div className="text-2xl">{icon}</div>
-                  <p className="text-sm font-semibold text-gray-700">{title}</p>
-                  <p className="text-xs text-gray-500 leading-relaxed">{body}</p>
-                </div>
-              ))}
-            </div>
-
-            {/* Quick-start guide */}
-            <div className="panel bg-gray-50 border border-gray-200">
-              <p className="text-xs font-semibold text-gray-600 mb-2">How to use</p>
-              <ol className="text-xs text-gray-500 space-y-1.5 list-none">
-                {[
-                  ["①", "Choose the test", "that matches your study design (e.g. Independent t-test for two groups)."],
-                  ["②", "Pick what to compute", "— usually \"Sample size\" if you're planning a new study."],
-                  ["③", "Enter effect size", "— use the Small/Medium/Large buttons if you're unsure. Medium is the most common default."],
-                  ["④", "Set Power = 0.80 and α = 0.05", "— the widely accepted standards."],
-                  ["⑤", "Click Calculate", "— results include a plain-language explanation and a power curve."],
-                ].map(([num, bold, rest]) => (
-                  <li key={num as string} className="flex gap-2">
-                    <span className="text-indigo-400 font-bold flex-shrink-0">{num}</span>
-                    <span><strong className="text-gray-700">{bold}</strong> {rest}</span>
-                  </li>
-                ))}
-              </ol>
             </div>
           </div>
-        )}
-      </div>
+
+          {/* Power curve — 3 cols */}
+          {result.curve.length > 0 && (
+            <div className="lg:col-span-3 panel space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-semibold text-gray-700">Power Curve</h4>
+                <p className="text-[10px] text-gray-400">
+                  Each point = power you'd have at that sample size. <span className="text-red-400">Red dashed</span> = 80% target. <span className="text-indigo-500">●</span> = your n.
+                </p>
+              </div>
+              <Plot
+                data={plotTraces as any}
+                layout={{
+                  ...BASE_LAYOUT,
+                  autosize: true, height: 320,
+                  xaxis: { ...BASE_LAYOUT.xaxis, showgrid: showGrid, title: { text: xLabel } },
+                  yaxis: { ...BASE_LAYOUT.yaxis, showgrid: showGrid },
+                  legend: { orientation: "h" as const, y: -0.22, font: { size: 11 } },
+                  shapes: currentN ? [{
+                    type: "line", xref: "x", yref: "y",
+                    x0: currentN, x1: currentN, y0: 0, y1: 1,
+                    line: { color: "#6366f1", width: 1.5, dash: "dot" },
+                  }] : [],
+                } as any}
+                style={{ width: "100%", height: 320 }}
+                useResizeHandler
+                config={{ responsive: true, displaylogo: false, displayModeBar: false }}
+              />
+
+              {/* Zone legend */}
+              <div className="grid grid-cols-3 gap-2 pt-1 border-t border-gray-100">
+                {[
+                  { range: "< 50%",    color: "bg-red-100 text-red-700",     label: "Severely underpowered — likely to miss the effect" },
+                  { range: "50–80%",   color: "bg-amber-100 text-amber-700", label: "Underpowered — below the accepted minimum" },
+                  { range: "≥ 80%",    color: "bg-emerald-100 text-emerald-700", label: "Adequately powered — meets the standard" },
+                ].map(z => (
+                  <div key={z.range} className={`rounded-lg px-2 py-1.5 text-[9px] leading-snug ${z.color}`}>
+                    <p className="font-bold text-[10px]">{z.range}</p>
+                    <p className="opacity-80">{z.label}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        /* ── Empty state ── */
+        <div className="space-y-3">
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { icon: "🎯", color: "indigo", title: "Statistical Power",
+                tip: "The probability of detecting a real effect. Aim for ≥ 80%.",
+                body: "A study with 50% power is like flipping a coin — you'd miss half of all real effects. 80% is the minimum; 90% for confirmatory trials." },
+              { icon: "📏", color: "violet", title: "Effect Size",
+                tip: "How large the true difference is in standardized units.",
+                body: "Cohen's presets (Small/Medium/Large) are safe defaults when you have no prior data. Medium is the most common assumption for planning." },
+              { icon: "🚦", color: "rose",   title: "Significance (α)",
+                tip: "The false-positive rate — probability of a result being a fluke.",
+                body: "α = 0.05 means a 5% chance of a false positive. Stricter thresholds (0.01) demand more participants but reduce spurious findings." },
+            ].map(({ icon, title, tip, body }) => (
+              <div key={title} className="panel flex flex-col gap-2 border-t-4 border-indigo-200">
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl">{icon}</span>
+                  <p className="text-sm font-semibold text-gray-700 flex items-center gap-1">
+                    {title} <Tip text={tip} />
+                  </p>
+                </div>
+                <p className="text-xs text-gray-500 leading-relaxed">{body}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="panel bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-100">
+            <p className="text-xs font-semibold text-indigo-700 mb-2">Quick start guide</p>
+            <ol className="text-xs text-gray-600 space-y-1.5">
+              {[
+                ["1", "Choose your test", "e.g. Independent t-test for two-group comparisons"],
+                ["2", "Select Solve For → Sample size", "most common when planning a new study"],
+                ["3", "Set effect size", "use Medium (0.50 for d) if you have no prior estimate"],
+                ["4", "Keep Power = 0.80 and α = 0.05", "the accepted standards for most journals"],
+                ["5", "Click Calculate", "you'll see the required n, a plain-language interpretation, and a power curve"],
+              ].map(([num, bold, rest]) => (
+                <li key={num} className="flex gap-2.5">
+                  <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0">{num}</span>
+                  <span><strong className="text-gray-700">{bold}</strong> — {rest}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

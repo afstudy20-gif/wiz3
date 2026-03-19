@@ -1,0 +1,704 @@
+/**
+ * PSMPanel — Propensity Score Matching
+ *
+ * Pipeline:
+ * 1. Logistic regression (Treatment ~ Covariates) → propensity scores
+ * 2. Nearest-neighbor 1:1 matching with caliper (0.2 × SD of PS)
+ * 3. SMD balance assessment before / after
+ * 4. Love Plot — the publication-standard balance visualization
+ * 5. Optional outcome analysis on matched cohort
+ */
+import { useState, useRef, useMemo } from "react";
+import Plot from "../PlotComponent";
+import { useStore } from "../store";
+import { runPSM } from "../api";
+import { Tip } from "./Tip";
+import PlotExporter from "./PlotExporter";
+import ResultExporter from "./ResultExporter";
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+const fmtP = (p: number) => (p < 0.001 ? "<0.001" : p.toFixed(3));
+const smdColor = (smd: number) =>
+  smd < 0.10 ? "text-emerald-600" : smd < 0.20 ? "text-amber-500" : "text-red-500";
+const smdBadge = (smd: number) =>
+  smd < 0.10
+    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+    : smd < 0.20
+    ? "bg-amber-50 text-amber-700 border-amber-200"
+    : "bg-red-50 text-red-600 border-red-200";
+
+const PLOT_BASE = {
+  paper_bgcolor: "transparent",
+  plot_bgcolor: "#f9fafb",
+  font: { color: "#374151", size: 11 },
+  margin: { t: 30, r: 24, b: 56, l: 130 },
+};
+
+// ── LovePlot ─────────────────────────────────────────────────────────────────
+function LovePlot({
+  smdBefore,
+  smdAfter,
+  threshold,
+  showConnectors,
+  showGrid,
+}: {
+  smdBefore: Record<string, number>;
+  smdAfter: Record<string, number>;
+  threshold: number;
+  showConnectors: boolean;
+  showGrid: boolean;
+}) {
+  const plotRef = useRef<any>(null);
+  const covariates = Object.keys(smdBefore).reverse(); // bottom-to-top
+
+  const xMax = Math.max(0.4, ...Object.values(smdBefore), ...Object.values(smdAfter)) * 1.15;
+
+  const traces: any[] = [
+    // Unmatched (red squares)
+    {
+      type: "scatter",
+      mode: "markers",
+      name: "Unmatched cohort",
+      x: covariates.map((c) => smdBefore[c]),
+      y: covariates,
+      marker: { symbol: "square", size: 11, color: "#ef4444" },
+      hovertemplate: "<b>%{y}</b><br>SMD (before) = %{x:.4f}<extra></extra>",
+    },
+    // Matched (blue circles)
+    {
+      type: "scatter",
+      mode: "markers",
+      name: "Matched cohort",
+      x: covariates.map((c) => smdAfter[c]),
+      y: covariates,
+      marker: { symbol: "circle", size: 11, color: "#3b82f6" },
+      hovertemplate: "<b>%{y}</b><br>SMD (after) = %{x:.4f}<extra></extra>",
+    },
+  ];
+
+  // Connector lines
+  if (showConnectors) {
+    for (const cov of covariates) {
+      traces.push({
+        type: "scatter",
+        mode: "lines",
+        x: [smdBefore[cov], smdAfter[cov]],
+        y: [cov, cov],
+        line: { color: "#94a3b8", width: 1.2, dash: "dot" },
+        showlegend: false,
+        hoverinfo: "skip",
+      });
+    }
+  }
+
+  const layout: any = {
+    ...PLOT_BASE,
+    autosize: true,
+    height: Math.max(260, covariates.length * 52 + 80),
+    xaxis: {
+      title: { text: "Standardized Mean Difference (SMD)" },
+      range: [0, xMax],
+      gridcolor: showGrid ? "#e5e7eb" : "transparent",
+      zeroline: false,
+    },
+    yaxis: {
+      gridcolor: "transparent",
+      automargin: true,
+    },
+    legend: {
+      x: 1, y: 0, xanchor: "right", yanchor: "bottom",
+      bgcolor: "rgba(249,250,251,0.9)",
+      bordercolor: "#e5e7eb", borderwidth: 1,
+      font: { size: 11 },
+    },
+    shapes: [
+      // Threshold vertical line
+      {
+        type: "line",
+        x0: threshold, x1: threshold,
+        y0: 0, y1: 1,
+        xref: "x", yref: "paper",
+        line: { color: "#dc2626", width: 1.5, dash: "dash" },
+      },
+    ],
+    annotations: [
+      {
+        x: threshold, y: 1.02,
+        xref: "x", yref: "paper",
+        text: `Threshold (${threshold})`,
+        showarrow: false,
+        font: { color: "#dc2626", size: 10 },
+        xanchor: "center",
+      },
+    ],
+  };
+
+  return (
+    <div className="relative">
+      <Plot
+        ref={plotRef}
+        data={traces}
+        layout={layout}
+        style={{ width: "100%", height: layout.height }}
+        useResizeHandler
+        config={{ responsive: true, displaylogo: false, displayModeBar: false }}
+        onInitialized={(_: any, gd: any) => { plotRef.current = gd; }}
+        onUpdate={(_: any, gd: any) => { plotRef.current = gd; }}
+      />
+      <PlotExporter plotRef={plotRef} title="Love_Plot_PSM" />
+    </div>
+  );
+}
+
+// ── PSOverlapPlot ─────────────────────────────────────────────────────────────
+function PSOverlapPlot({
+  psDist,
+  showGrid,
+}: {
+  psDist: { treated_unmatched: number[]; control_unmatched: number[]; treated_matched: number[]; control_matched: number[] };
+  showGrid: boolean;
+}) {
+  const plotRef = useRef<any>(null);
+  return (
+    <div className="relative">
+      <Plot
+        ref={plotRef}
+        data={[
+          {
+            type: "histogram",
+            name: "Treated (unmatched)",
+            x: psDist.treated_unmatched,
+            opacity: 0.55,
+            marker: { color: "#ef4444" },
+            nbinsx: 25,
+            hovertemplate: "PS: %{x:.3f}<br>Count: %{y}<extra></extra>",
+          },
+          {
+            type: "histogram",
+            name: "Control (unmatched)",
+            x: psDist.control_unmatched,
+            opacity: 0.55,
+            marker: { color: "#3b82f6" },
+            nbinsx: 25,
+            hovertemplate: "PS: %{x:.3f}<br>Count: %{y}<extra></extra>",
+          },
+        ]}
+        layout={{
+          ...PLOT_BASE,
+          barmode: "overlay",
+          autosize: true,
+          height: 230,
+          xaxis: {
+            title: { text: "Propensity Score" },
+            range: [0, 1],
+            gridcolor: showGrid ? "#e5e7eb" : "transparent",
+          },
+          yaxis: { title: { text: "Count" }, gridcolor: showGrid ? "#e5e7eb" : "transparent" },
+          legend: { x: 1, y: 1, xanchor: "right", bgcolor: "rgba(249,250,251,0.9)", bordercolor: "#e5e7eb", borderwidth: 1 },
+          annotations: [{
+            x: 0.5, y: 1.08, xref: "paper", yref: "paper",
+            text: "Propensity Score Overlap (Common Support)",
+            showarrow: false, font: { color: "#374151", size: 12 },
+          }],
+        } as any}
+        style={{ width: "100%", height: 230 }}
+        useResizeHandler
+        config={{ responsive: true, displaylogo: false, displayModeBar: false }}
+        onInitialized={(_: any, gd: any) => { plotRef.current = gd; }}
+        onUpdate={(_: any, gd: any) => { plotRef.current = gd; }}
+      />
+      <PlotExporter plotRef={plotRef} title="PSM_Propensity_Overlap" />
+    </div>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+export default function PSMPanel() {
+  const session  = useStore((s) => s.session);
+  const showGrid = useStore((s) => s.showGrid);
+  if (!session) return null;
+
+  const allCols = session.columns.map((c) => c.name);
+  const numCols = session.columns.filter((c) => c.kind === "numeric" || c.kind === "boolean").map((c) => c.name);
+
+  // Detect binary cols (0/1) from preview
+  const binaryCols = useMemo(() =>
+    allCols.filter((col) => {
+      const vals = new Set(session.preview.map((r) => r[col]).filter((v) => v != null));
+      return vals.size === 2 && [...vals].every((v) => v === 0 || v === 1);
+    }),
+    [session.session_id]
+  );
+
+  // Form state
+  const [treatCol,   setTreatCol]   = useState(binaryCols[0] ?? allCols[0] ?? "");
+  const [outcomeCol, setOutcomeCol] = useState("");
+  const [covariates, setCovariates] = useState<string[]>([]);
+  const [caliper,    setCaliper]    = useState(0.2);
+  const [covFilter,  setCovFilter]  = useState("");
+
+  // Result & UI
+  const [result,         setResult]         = useState<any>(null);
+  const [loading,        setLoading]        = useState(false);
+  const [error,          setError]          = useState<string | null>(null);
+  const [threshold,      setThreshold]      = useState(0.10);
+  const [showConnectors, setShowConnectors] = useState(true);
+
+  const toggleCov = (c: string) =>
+    setCovariates((p) => (p.includes(c) ? p.filter((x) => x !== c) : [...p, c]));
+
+  const run = async () => {
+    if (covariates.length === 0) { setError("Select at least one covariate"); return; }
+    setLoading(true); setError(null); setResult(null);
+    try {
+      const res = await runPSM({
+        session_id:    session.session_id,
+        treatment_col: treatCol,
+        covariates,
+        outcome_col:   outcomeCol || undefined,
+        caliper,
+      });
+      setResult(res.data);
+    } catch (e: any) {
+      const msg = e.response?.data?.detail;
+      setError(typeof msg === "string" ? msg : (e.message ?? "PSM failed"));
+    } finally { setLoading(false); }
+  };
+
+  // Build export data for SMD table
+  const smdExportHeaders = ["Covariate", "SMD Before", "SMD After", "Reduction %", "Balanced (<0.10)"];
+  const smdExportRows = result
+    ? Object.keys(result.smd_before).map((cov) => [
+        cov,
+        result.smd_before[cov].toFixed(4),
+        result.smd_after[cov].toFixed(4),
+        (((result.smd_before[cov] - result.smd_after[cov]) / result.smd_before[cov]) * 100).toFixed(1) + "%",
+        result.smd_after[cov] < 0.10 ? "Yes" : "No",
+      ])
+    : [];
+
+  const availableCovs = allCols.filter(
+    (c) => c !== treatCol && c !== outcomeCol &&
+           c.toLowerCase().includes(covFilter.toLowerCase())
+  );
+
+  return (
+    <div className="flex gap-4 min-h-0">
+
+      {/* ── Left sidebar ─────────────────────────────────────────────────── */}
+      <div className="w-64 flex-shrink-0 space-y-3 overflow-y-auto">
+
+        {/* Header */}
+        <div className="panel bg-gradient-to-br from-indigo-50 to-purple-50 border-indigo-200 space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="text-xl">🧬</span>
+            <h2 className="text-sm font-bold text-indigo-800">Propensity Score Matching</h2>
+          </div>
+          <p className="text-[10px] text-indigo-600 leading-snug">
+            Mimics an RCT from observational data by balancing confounders between treated and control groups. Required for causal inference in non-randomized cardiology studies.
+          </p>
+        </div>
+
+        {/* Treatment variable */}
+        <div className="panel space-y-2">
+          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-1">
+            Treatment Variable
+            <Tip wide text="The binary intervention variable: 1 = Treated, 0 = Control. Examples: TAVI vs Open Surgery, Drug A vs Drug B. Must be coded 0/1." />
+          </label>
+          <select
+            className="select w-full"
+            value={treatCol}
+            onChange={(e) => { setTreatCol(e.target.value); setResult(null); }}>
+            {binaryCols.length > 0
+              ? binaryCols.map((c) => <option key={c} value={c}>{c}</option>)
+              : allCols.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+          {!binaryCols.includes(treatCol) && (
+            <p className="text-[10px] text-amber-600">⚠ Column may not be binary (0/1)</p>
+          )}
+        </div>
+
+        {/* Outcome variable */}
+        <div className="panel space-y-2">
+          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-1">
+            Outcome Variable <span className="normal-case font-normal text-gray-400">(optional)</span>
+            <Tip wide text="The endpoint to analyse in the matched cohort (e.g. EXITUS, 30-day mortality). If binary, logistic regression is run automatically. Leave blank to only assess balance." />
+          </label>
+          <select
+            className="select w-full"
+            value={outcomeCol}
+            onChange={(e) => { setOutcomeCol(e.target.value); setResult(null); }}>
+            <option value="">— Skip outcome analysis —</option>
+            {allCols.filter((c) => c !== treatCol).map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+
+        {/* Covariates */}
+        <div className="panel space-y-2">
+          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-1">
+            Covariates (Confounders)
+            <Tip wide text="Baseline patient characteristics that influence both the treatment decision AND the outcome. Examples: Age, Sex, EF, Diabetes, Hypertension. Include all known confounders — omitting one biases the propensity score." />
+          </label>
+          <input
+            type="text"
+            placeholder="Filter covariates…"
+            className="select w-full text-xs py-1"
+            value={covFilter}
+            onChange={(e) => setCovFilter(e.target.value)}
+          />
+          <div className="flex gap-1">
+            <button onClick={() => setCovariates(availableCovs)}
+              className="text-[10px] px-1.5 py-0.5 rounded border border-gray-300 text-gray-500 hover:bg-gray-50">All</button>
+            <button onClick={() => setCovariates([])}
+              className="text-[10px] px-1.5 py-0.5 rounded border border-gray-300 text-gray-500 hover:bg-gray-50">None</button>
+          </div>
+          <div className="max-h-52 overflow-y-auto space-y-0.5 border border-gray-200 rounded-lg p-1">
+            {availableCovs.map((c) => (
+              <label key={c} className="flex items-center gap-1.5 text-xs px-1 py-0.5 rounded hover:bg-gray-50 cursor-pointer">
+                <input type="checkbox" className="accent-indigo-500"
+                  checked={covariates.includes(c)} onChange={() => toggleCov(c)} />
+                <span className="text-gray-700 truncate">{c}</span>
+              </label>
+            ))}
+          </div>
+          <p className="text-[10px] text-gray-400">{covariates.length} selected</p>
+        </div>
+
+        {/* Caliper */}
+        <div className="panel space-y-2">
+          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-1">
+            Caliper
+            <Tip wide text="Maximum allowed PS distance for a match, expressed as a fraction of the SD of propensity scores. Medical standard = 0.2 (Cochran & Rubin, 1973). Tighter caliper = better balance but more unmatched patients." />
+          </label>
+          <div className="flex gap-2 items-center">
+            <input type="range" min="0.05" max="0.50" step="0.05"
+              className="flex-1 accent-indigo-500"
+              value={caliper}
+              onChange={(e) => setCaliper(parseFloat(e.target.value))} />
+            <span className="font-mono text-sm font-semibold text-indigo-700 w-10 text-right">{caliper}</span>
+          </div>
+          <div className="flex justify-between text-[9px] text-gray-400">
+            <span>0.05 (strict)</span>
+            <span className="text-indigo-500">0.20 ★ standard</span>
+            <span>0.50 (loose)</span>
+          </div>
+        </div>
+
+        {/* Run */}
+        <button
+          className="btn-primary w-full py-3 text-sm font-semibold flex items-center justify-center gap-2"
+          onClick={run} disabled={loading || covariates.length === 0}>
+          {loading
+            ? <><span className="animate-spin inline-block">⏳</span> Matching…</>
+            : <><span>🔗</span> Run PSM</>}
+        </button>
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-2 text-xs text-red-600">{error}</div>
+        )}
+      </div>
+
+      {/* ── Main content ─────────────────────────────────────────────────── */}
+      <div className="flex-1 min-w-0 overflow-y-auto space-y-4">
+
+        {result ? (
+          <>
+            {/* ── Matching summary banner ── */}
+            <div className={`panel border-2 ${result.balance_achieved ? "border-emerald-300 bg-emerald-50" : "border-amber-300 bg-amber-50"}`}>
+              <div className="flex items-start gap-3">
+                <span className="text-2xl flex-shrink-0">{result.balance_achieved ? "✅" : "⚠️"}</span>
+                <div className="flex-1">
+                  <p className={`font-bold text-sm ${result.balance_achieved ? "text-emerald-800" : "text-amber-800"}`}>
+                    {result.balance_achieved
+                      ? "Balance achieved — all SMDs < 0.10. Publication-ready."
+                      : "Partial balance — some SMDs ≥ 0.10. Consider widening caliper or adding covariates."}
+                  </p>
+                  <p className="text-xs text-gray-600 mt-1">
+                    Matched {result.n_matched_pairs} treated : {result.n_matched_controls} control pairs
+                    ({result.n_unmatched} treated patients unmatched and excluded).
+                    Caliper = {result.caliper_used.toFixed(4)} (PS units).
+                  </p>
+                </div>
+              </div>
+
+              {/* Key stats */}
+              <div className="grid grid-cols-5 gap-2 mt-3">
+                {[
+                  { label: "Total N",         val: result.n_total },
+                  { label: "Treated",          val: result.n_treated },
+                  { label: "Controls",         val: result.n_control },
+                  { label: "Matched Pairs",    val: result.n_matched_pairs, highlight: true },
+                  { label: "Unmatched",        val: result.n_unmatched, warn: result.n_unmatched > 0 },
+                ].map(({ label, val, highlight, warn }) => (
+                  <div key={label} className={`rounded-lg px-2 py-2 text-center border ${
+                    highlight ? "bg-indigo-50 border-indigo-200" :
+                    warn && val > 0 ? "bg-amber-50 border-amber-200" :
+                    "bg-white border-gray-200"}`}>
+                    <p className="text-[9px] text-gray-400 uppercase tracking-wide">{label}</p>
+                    <p className={`text-lg font-bold ${highlight ? "text-indigo-700" : warn && val > 0 ? "text-amber-600" : "text-gray-800"}`}>
+                      {val}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* ── Love Plot ── */}
+            <div className="panel space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <h3 className="text-sm font-bold text-gray-800">Love Plot: Covariate Balance</h3>
+                  <p className="text-[10px] text-gray-400">
+                    Named after Dr. Thomas Love. Publication-required visual proof of balance. All matched points (blue ●) must lie left of the threshold line.
+                  </p>
+                </div>
+                {/* Avg SMD summary */}
+                <div className="flex gap-3">
+                  {[
+                    { label: "Avg Unmatched SMD", val: result.avg_smd_before, color: "text-red-600" },
+                    { label: "Avg Matched SMD",   val: result.avg_smd_after,  color: "text-emerald-600" },
+                    { label: "Reduction",          val: `${result.reduction_pct}%`, color: "text-indigo-600" },
+                  ].map(({ label, val, color }) => (
+                    <div key={label} className="text-center bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5">
+                      <p className="text-[9px] text-gray-400 uppercase tracking-wide">{label}</p>
+                      <p className={`text-base font-bold font-mono ${color}`}>
+                        {typeof val === "number" ? val.toFixed(3) : val}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <LovePlot
+                smdBefore={result.smd_before}
+                smdAfter={result.smd_after}
+                threshold={threshold}
+                showConnectors={showConnectors}
+                showGrid={showGrid}
+              />
+
+              {/* Controls below plot */}
+              <div className="flex flex-wrap items-center gap-6 pt-2 border-t border-gray-100">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-500">Balance Threshold</span>
+                  <input type="range" min="0.05" max="0.25" step="0.01"
+                    className="w-28 accent-indigo-500"
+                    value={threshold}
+                    onChange={(e) => setThreshold(parseFloat(e.target.value))} />
+                  <span className="font-mono text-sm font-bold text-indigo-700 w-10">{threshold.toFixed(2)}</span>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <span className="text-xs text-gray-500">Show Connectors</span>
+                  <div
+                    className={`w-9 h-5 rounded-full transition-colors cursor-pointer ${showConnectors ? "bg-indigo-600" : "bg-gray-300"}`}
+                    onClick={() => setShowConnectors((v) => !v)}>
+                    <div className={`w-4 h-4 bg-white rounded-full shadow mt-0.5 transition-transform ${showConnectors ? "translate-x-4" : "translate-x-0.5"}`} />
+                  </div>
+                </label>
+                <div className="flex items-center gap-3 text-xs ml-auto">
+                  <span className="flex items-center gap-1"><span className="w-3 h-3 bg-red-400 rounded-sm inline-block" /> Unmatched</span>
+                  <span className="flex items-center gap-1"><span className="w-3 h-3 bg-blue-500 rounded-full inline-block" /> Matched</span>
+                  <span className="flex items-center gap-1"><span className="border-l-2 border-dashed border-red-500 h-3 inline-block" /> Threshold</span>
+                </div>
+              </div>
+            </div>
+
+            {/* ── SMD balance table ── */}
+            <div className="panel space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-gray-700">
+                  SMD Balance Table
+                  <Tip wide text="Standardized Mean Difference measures imbalance in each covariate between groups. The gold standard for publication: all SMDs after matching must be < 0.10 (Austin, 2009)." />
+                </h3>
+                <ResultExporter
+                  title="PSM_SMD_Balance"
+                  headers={smdExportHeaders}
+                  rows={smdExportRows}
+                />
+              </div>
+              <div className="overflow-auto rounded-lg border border-gray-200">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-200 text-gray-500">
+                      <th className="text-left px-3 py-2 font-medium">Covariate</th>
+                      <th className="text-right px-3 py-2 font-medium">SMD Before</th>
+                      <th className="text-right px-3 py-2 font-medium">SMD After</th>
+                      <th className="text-right px-3 py-2 font-medium">Reduction</th>
+                      <th className="text-center px-3 py-2 font-medium">Balanced</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.keys(result.smd_before).map((cov) => {
+                      const before = result.smd_before[cov];
+                      const after  = result.smd_after[cov];
+                      const reduction = before > 0 ? ((before - after) / before * 100).toFixed(1) : "—";
+                      const balanced = after < threshold;
+                      return (
+                        <tr key={cov} className="border-b border-gray-100 hover:bg-gray-50">
+                          <td className="px-3 py-1.5 font-mono text-gray-800">{cov}</td>
+                          <td className={`px-3 py-1.5 text-right font-mono ${smdColor(before)}`}>{before.toFixed(4)}</td>
+                          <td className={`px-3 py-1.5 text-right font-mono font-semibold ${smdColor(after)}`}>{after.toFixed(4)}</td>
+                          <td className="px-3 py-1.5 text-right text-gray-500">{reduction}%</td>
+                          <td className="px-3 py-1.5 text-center">
+                            <span className={`inline-block text-[9px] font-semibold border rounded-full px-1.5 py-0.5 ${
+                              balanced ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-red-50 text-red-600 border-red-200"
+                            }`}>
+                              {balanced ? "✓" : "✗"}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot className="bg-gray-50 border-t-2 border-gray-200">
+                    <tr>
+                      <td className="px-3 py-1.5 font-semibold text-gray-700">Average</td>
+                      <td className={`px-3 py-1.5 text-right font-mono font-semibold ${smdColor(result.avg_smd_before)}`}>{result.avg_smd_before.toFixed(4)}</td>
+                      <td className={`px-3 py-1.5 text-right font-mono font-semibold ${smdColor(result.avg_smd_after)}`}>{result.avg_smd_after.toFixed(4)}</td>
+                      <td className="px-3 py-1.5 text-right text-indigo-600 font-semibold">{result.reduction_pct}%</td>
+                      <td className="px-3 py-1.5 text-center">
+                        <span className={`inline-block text-[9px] font-semibold border rounded-full px-1.5 py-0.5 ${
+                          result.balance_achieved ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"
+                        }`}>
+                          {result.balance_achieved ? "All ✓" : "Partial"}
+                        </span>
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+              <p className="text-[10px] text-gray-400">
+                Reference: Austin PC (2011). <em>Multivariate Behavioral Research</em>. SMD &lt; 0.10 after matching = adequate balance for publication (Q1/Q2 cardiology journals).
+              </p>
+            </div>
+
+            {/* ── PS Overlap ── */}
+            {result.ps_distribution && (
+              <div className="panel space-y-2">
+                <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-1">
+                  Propensity Score Overlap
+                  <Tip wide text="The distributions must overlap substantially (common support) for PSM to be valid. If treated and control PS distributions barely overlap, matching cannot remove confounding — reconsider model specification." />
+                </h3>
+                <PSOverlapPlot psDist={result.ps_distribution} showGrid={showGrid} />
+                <p className="text-[10px] text-gray-400">
+                  Substantial overlap between red (treated) and blue (control) distributions confirms PSM is valid. Sparse overlap indicates poor common support.
+                </p>
+              </div>
+            )}
+
+            {/* ── Outcome analysis ── */}
+            {result.outcome_result && !result.outcome_result.error && (
+              <div className="panel space-y-3">
+                <h3 className="text-sm font-semibold text-gray-700">
+                  Outcome Analysis — Matched Cohort
+                  <span className="ml-2 text-[10px] font-normal text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5">
+                    {result.outcome_result.model}
+                  </span>
+                </h3>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    ["n (matched)", result.outcome_result.n],
+                    ["AIC",         result.outcome_result.aic?.toFixed(2)],
+                    ["BIC",         result.outcome_result.bic?.toFixed(2)],
+                  ].map(([k, v]: any) => (
+                    <div key={k} className="bg-gray-50 border border-gray-200 rounded-lg p-2 text-center">
+                      <p className="text-[10px] text-gray-400">{k}</p>
+                      <p className="font-semibold text-gray-800 text-sm">{v}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="overflow-auto rounded-lg border border-gray-200">
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-200 text-gray-500">
+                        {["Variable","OR","95% CI","β","SE","z","p"].map((h) => (
+                          <th key={h} className="px-2 py-2 text-left font-medium">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {result.outcome_result.coefficients.map((c: any) => (
+                        <tr key={c.variable} className={`border-b border-gray-100 ${c.p < 0.05 ? "hover:bg-indigo-50/30" : "hover:bg-gray-50"}`}>
+                          <td className="px-2 py-1.5 font-mono text-gray-800">{c.variable}</td>
+                          <td className={`px-2 py-1.5 font-mono font-semibold ${c.p < 0.05 ? "text-indigo-700" : "text-gray-600"}`}>{c.or?.toFixed(3)}</td>
+                          <td className="px-2 py-1.5 font-mono text-gray-500">[{c.or_low?.toFixed(3)}, {c.or_high?.toFixed(3)}]</td>
+                          <td className="px-2 py-1.5 font-mono text-gray-600">{c.estimate?.toFixed(4)}</td>
+                          <td className="px-2 py-1.5 font-mono text-gray-500">{c.se?.toFixed(4)}</td>
+                          <td className="px-2 py-1.5 font-mono text-gray-500">{c.z?.toFixed(3)}</td>
+                          <td className="px-2 py-1.5">
+                            <span className={`inline-block font-mono px-1.5 py-0.5 rounded text-[10px] ${
+                              c.p < 0.05 ? "bg-indigo-100 text-indigo-700 font-semibold" : "text-gray-400"
+                            }`}>{fmtP(c.p)}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-[10px] text-gray-400">
+                  OR = Odds Ratio (exp(β)). Results are from the matched cohort only. The treatment variable is included as a predictor.
+                </p>
+              </div>
+            )}
+
+            {result.outcome_result?.error && (
+              <div className="panel bg-red-50 border border-red-200 text-xs text-red-600">
+                Outcome analysis failed: {result.outcome_result.error}
+              </div>
+            )}
+          </>
+        ) : (
+          /* ── Empty state ── */
+          <div className="space-y-4">
+            <div className="panel bg-gradient-to-br from-indigo-50 to-purple-50 border-indigo-100">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="text-3xl">🧬</span>
+                <div>
+                  <h2 className="text-base font-bold text-indigo-900">Propensity Score Matching</h2>
+                  <p className="text-xs text-indigo-600">Advanced Epidemiology — Observational Causal Inference</p>
+                </div>
+              </div>
+              <p className="text-sm text-gray-700 leading-relaxed">
+                PSM mimics a Randomized Controlled Trial from observational data by balancing baseline characteristics between treated and control groups. It is the accepted gold standard for non-randomized cardiology studies.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { icon: "🎯", title: "Step 1 — Propensity Score", color: "indigo",
+                  body: "Logistic regression (Treatment ~ Covariates) estimates each patient's probability of receiving treatment given their baseline profile. This is their Propensity Score (PS)." },
+                { icon: "🔗", title: "Step 2 — Nearest-Neighbour Matching", color: "violet",
+                  body: "Each treated patient is matched to the control with the closest PS. Caliper = 0.2 × SD(PS) — the medical standard prevents poor matches from degrading balance." },
+                { icon: "📊", title: "Step 3 — Love Plot (SMD)", color: "blue",
+                  body: "Standardized Mean Differences are calculated before and after matching for every covariate. ALL SMDs must be < 0.10 for the match to be publication-ready (Austin, 2011)." },
+                { icon: "🏥", title: "Step 4 — Outcome Analysis", color: "emerald",
+                  body: "Logistic regression, Kaplan-Meier, or Cox regression is run on the balanced matched cohort. Treatment effects estimated here are free from measured confounding." },
+              ].map(({ icon, title, color, body }) => (
+                <div key={title} className="panel flex gap-3 border-t-4 border-indigo-200">
+                  <span className="text-2xl flex-shrink-0">{icon}</span>
+                  <div>
+                    <p className="text-xs font-bold text-gray-800 mb-1">{title}</p>
+                    <p className="text-xs text-gray-500 leading-relaxed">{body}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="panel bg-amber-50 border border-amber-200 space-y-1.5">
+              <p className="text-xs font-bold text-amber-800">⚠ Key Assumptions</p>
+              {[
+                ["No unmeasured confounders", "PSM only balances variables you include. Hidden confounders (not in your dataset) cannot be removed — this is PSM's fundamental limitation."],
+                ["Binary treatment", "The treatment variable must be 0/1. Continuous or multi-level treatments require different methods (e.g. GPS, IPTW)."],
+                ["Common support", "Treated and control propensity score distributions must overlap substantially. No overlap = no valid matches."],
+              ].map(([title, body]) => (
+                <div key={title as string} className="flex gap-1.5 text-[10px] text-amber-700">
+                  <span className="flex-shrink-0 font-semibold">{title}:</span>
+                  <span>{body}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

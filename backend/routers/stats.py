@@ -358,28 +358,49 @@ def _delong_placement_values(y: np.ndarray, scores: np.ndarray):
 
 
 def _delong_compare(y: np.ndarray, s1: np.ndarray, s2: np.ndarray) -> dict:
-    """DeLong 1988 non-parametric AUC comparison. Returns diff, Z, p."""
+    """DeLong 1988 non-parametric AUC comparison.
+    Returns AUCs, ΔAUC, 95% CI of ΔAUC, Z, p, and individual AUC 95% CIs."""
     V_pos1, V_neg1 = _delong_placement_values(y, s1)
     V_pos2, V_neg2 = _delong_placement_values(y, s2)
-    n1, n0 = len(V_pos1), len(V_neg1)
+    n_pos, n_neg = len(V_pos1), len(V_neg1)
     auc1 = float(np.mean(V_pos1))
     auc2 = float(np.mean(V_pos2))
-    # Covariance matrix of [AUC1, AUC2]
-    s11 = np.var(V_pos1, ddof=1) / n1 + np.var(V_neg1, ddof=1) / n0
-    s22 = np.var(V_pos2, ddof=1) / n1 + np.var(V_neg2, ddof=1) / n0
-    s12 = (np.cov(V_pos1, V_pos2, ddof=1)[0, 1] / n1
-           + np.cov(V_neg1, V_neg2, ddof=1)[0, 1] / n0)
-    var_diff = s11 + s22 - 2 * s12
+
+    # Variance-covariance matrix of [AUC1, AUC2] via empirical Mann-Whitney U
+    s11 = np.var(V_pos1, ddof=1) / n_pos + np.var(V_neg1, ddof=1) / n_neg
+    s22 = np.var(V_pos2, ddof=1) / n_pos + np.var(V_neg2, ddof=1) / n_neg
+    s12 = (np.cov(V_pos1, V_pos2, ddof=1)[0, 1] / n_pos
+           + np.cov(V_neg1, V_neg2, ddof=1)[0, 1] / n_neg)
+
+    # 95% CI for ΔAUC = AUC1 − AUC2
+    var_diff = max(s11 + s22 - 2 * s12, 1e-12)
     diff = auc1 - auc2
-    if var_diff <= 0:
-        return {"auc_1": round(auc1, 4), "auc_2": round(auc2, 4),
-                "difference": round(diff, 4), "z": 0.0, "p": 1.0}
-    z = diff / np.sqrt(var_diff)
+    se_diff = np.sqrt(var_diff)
+    z = diff / se_diff
     p = float(2 * (1 - scipy_stats.norm.cdf(abs(z))))
+    z95 = 1.95996   # scipy_stats.norm.ppf(0.975)
+    ci_diff_low  = float(diff - z95 * se_diff)
+    ci_diff_high = float(diff + z95 * se_diff)
+
+    # 95% CI for each individual AUC (DeLong SE, no bootstrap needed)
+    se1 = np.sqrt(max(s11, 1e-12))
+    se2 = np.sqrt(max(s22, 1e-12))
+    ci1_low  = max(0.0, float(auc1 - z95 * se1))
+    ci1_high = min(1.0, float(auc1 + z95 * se1))
+    ci2_low  = max(0.0, float(auc2 - z95 * se2))
+    ci2_high = min(1.0, float(auc2 + z95 * se2))
+
     return {
         "auc_1": round(auc1, 4),
         "auc_2": round(auc2, 4),
-        "difference": round(diff, 4),
+        "ci_1_low":  round(ci1_low, 4),
+        "ci_1_high": round(ci1_high, 4),
+        "ci_2_low":  round(ci2_low, 4),
+        "ci_2_high": round(ci2_high, 4),
+        "difference":    round(diff, 4),
+        "ci_diff_low":   round(ci_diff_low, 4),
+        "ci_diff_high":  round(ci_diff_high, 4),
+        "se_diff": round(float(se_diff), 6),
         "z": round(float(z), 4),
         "p": round(p, 6),
         "significant": bool(p < 0.05),
@@ -492,7 +513,7 @@ def roc_compare(req: ROCCompareRequest):
     s2_arr, y_arr2, _ = _validate_roc_inputs(df_full, req.score_column_2, req.outcome_column)
 
     if not np.array_equal(y_arr, y_arr2):
-        # Different NaN patterns — use common complete rows
+        # Different NaN patterns — use common complete rows (DeLong requires paired data)
         df_clean = df_full.dropna(subset=[req.score_column_1, req.score_column_2, req.outcome_column])
         if len(df_clean) < 10:
             raise HTTPException(status_code=400, detail="Not enough complete rows for comparison (need ≥ 10)")
@@ -505,21 +526,43 @@ def roc_compare(req: ROCCompareRequest):
     result["score_2"] = req.score_column_2
     result["n"] = int(len(y_arr))
 
+    # ROC curves for both models (for the overlaid publication plot)
+    def _roc_curve_pts(scores, y):
+        fpr, tpr, _ = roc_curve(y, scores)
+        n_pts = len(fpr)
+        step = max(1, n_pts // 300)
+        idx = list(range(0, n_pts, step))
+        if (n_pts - 1) not in idx:
+            idx.append(n_pts - 1)
+        return [{"fpr": round(float(fpr[i]), 6), "tpr": round(float(tpr[i]), 6)} for i in idx]
+
+    result["curve_1"] = _roc_curve_pts(s1_arr, y_arr)
+    result["curve_2"] = _roc_curve_pts(s2_arr, y_arr)
+
     auc1, auc2 = result["auc_1"], result["auc_2"]
     diff = result["difference"]
     p = result["p"]
-    p_str = "<0.001" if p < 0.001 else f"{p:.4f}"
+    p_str = "<0.001" if p < 0.001 else f"{p:.3f}"
+    ci_lo = result["ci_diff_low"]
+    ci_hi = result["ci_diff_high"]
     winner = req.score_column_1 if diff > 0 else req.score_column_2
     loser  = req.score_column_2 if diff > 0 else req.score_column_1
+    higher_auc = max(auc1, auc2)
+    lower_auc  = min(auc1, auc2)
+
     if result["significant"]:
         result["interpretation"] = (
-            f"{winner} has significantly better AUC than {loser} "
-            f"(ΔAUC = {abs(diff):.4f}, p = {p_str})"
+            f"{winner} significantly improved discrimination over {loser} "
+            f"(AUC {higher_auc:.3f} vs. {lower_auc:.3f}; "
+            f"ΔAUC = {abs(diff):.3f}, 95% CI: {abs(ci_lo):.3f}–{abs(ci_hi):.3f}, "
+            f"DeLong p = {p_str})."
         )
     else:
         result["interpretation"] = (
-            f"No significant difference between AUCs "
-            f"(ΔAUC = {abs(diff):.4f}, p = {p_str})"
+            f"No significant difference between {req.score_column_1} and {req.score_column_2} "
+            f"(AUC {auc1:.3f} vs. {auc2:.3f}; "
+            f"ΔAUC = {abs(diff):.3f}, 95% CI: {ci_lo:.3f}–{ci_hi:.3f}, "
+            f"DeLong p = {p_str})."
         )
 
     return _sanitize(result)
@@ -648,6 +691,27 @@ def get_sparklines(session_id: str):
 
 
 # ── Raw column values (for SPLOM scatterplot matrix) ─────────────────────────
+
+@router.get("/{session_id}/refresh")
+def refresh_session(session_id: str):
+    """Return updated session metadata after in-place operations (e.g. melt/compute)."""
+    import json as _json
+    df = _get_df(session_id)
+    columns = []
+    for col in df.columns:
+        dtype = str(df[col].dtype)
+        if dtype.startswith("int") or dtype.startswith("float"):
+            kind = "numeric"
+        elif dtype == "bool":
+            kind = "boolean"
+        else:
+            n_unique = df[col].nunique()
+            kind = "categorical" if n_unique <= 50 else "text"
+        columns.append({"name": col, "dtype": dtype, "kind": kind})
+    preview_df = df.head(2000).replace([np.inf, -np.inf], np.nan)
+    preview = _json.loads(preview_df.to_json(orient="records", default_handler=str))
+    return {"rows": len(df), "columns": columns, "preview": preview}
+
 
 @router.get("/{session_id}/raw")
 def get_raw_columns(session_id: str, columns: str = ""):
@@ -1042,11 +1106,72 @@ def correlation_pair(req: CorrelationPairRequest):
     if n < 3:
         raise HTTPException(status_code=400, detail="Need at least 3 observations")
 
-    # Normality check (Shapiro-Wilk, only reliable for n≤5000)
-    sw1_stat, sw1_p = scipy_stats.shapiro(x[:5000])
-    sw2_stat, sw2_p = scipy_stats.shapiro(y[:5000])
-    normal1 = bool(sw1_p >= 0.05)
-    normal2 = bool(sw2_p >= 0.05)
+    # ── Normality assessment ──────────────────────────────────────────────────
+    # Three-tier strategy matching professional statistical software:
+    #
+    # Tier 1 (n ≤ 2000): Shapiro-Wilk — most powerful test for small/medium samples.
+    #
+    # Tier 2 (n > 2000, |skewness| ≤ 1.5): CLT Skewness Bypass — at large n,
+    #   even Lilliefors becomes hypersensitive. Mild skewness (-1.5 to +1.5)
+    #   does not violate Pearson's assumptions at large n; the Central Limit
+    #   Theorem ensures the sampling distribution of r is approximately normal.
+    #   Treat as normal; preserve statistical power.
+    #
+    # Tier 3 (n > 2000, |skewness| > 1.5): Lilliefors-corrected KS — standard
+    #   KS assumes known population parameters; Lilliefors corrects for the fact
+    #   that mean/SD are estimated from the sample (reduces false normality).
+
+    def _assess_normality(arr: np.ndarray) -> dict:
+        _n = len(arr)
+        skewness = float(scipy_stats.skew(arr))
+
+        if _n <= 2000:
+            stat, p_val = scipy_stats.shapiro(arr)
+            return {
+                "statistic": float(stat),
+                "p": float(p_val),
+                "normal": bool(p_val >= 0.05),
+                "skewness": skewness,
+                "test": "Shapiro-Wilk",
+                "bypass": None,
+            }
+
+        # Large n — check skewness first
+        if abs(skewness) <= 1.5:
+            return {
+                "statistic": None,
+                "p": None,
+                "normal": True,
+                "skewness": skewness,
+                "test": "Skewness (CLT bypass)",
+                "bypass": "clt_skew",
+            }
+
+        # Marked skewness — Lilliefors-corrected KS test
+        from statsmodels.stats.diagnostic import lilliefors as _lilliefors
+        stat, p_val = _lilliefors(arr, dist="norm")
+        return {
+            "statistic": float(stat),
+            "p": float(p_val),
+            "normal": bool(p_val >= 0.05),
+            "skewness": skewness,
+            "test": "Lilliefors",
+            "bypass": None,
+        }
+
+    norm1 = _assess_normality(x)
+    norm2 = _assess_normality(y)
+    normal1 = norm1["normal"]
+    normal2 = norm2["normal"]
+
+    # Top-level test label for display (most conservative test used)
+    _tests_used = {norm1["test"], norm2["test"]}
+    if "Lilliefors" in _tests_used:
+        norm_test_name = "Lilliefors"
+    elif "Shapiro-Wilk" in _tests_used:
+        norm_test_name = "Shapiro-Wilk"
+    else:
+        norm_test_name = "Skewness (CLT bypass)"
 
     # Method selection
     method = req.method or "auto"
@@ -1100,9 +1225,10 @@ def correlation_pair(req: CorrelationPairRequest):
         "p": float(p),
         "ci_low": ci_low,
         "ci_high": ci_high,
+        "normality_test": norm_test_name,
         "normality": {
-            req.var1: {"statistic": float(sw1_stat), "p": float(sw1_p), "normal": normal1},
-            req.var2: {"statistic": float(sw2_stat), "p": float(sw2_p), "normal": normal2},
+            req.var1: norm1,
+            req.var2: norm2,
         },
         "scatter": {"x": scatter_x, "y": scatter_y},
         "regression_line": {

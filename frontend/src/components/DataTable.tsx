@@ -218,29 +218,29 @@ export default function DataTable() {
               ✕ Clear {activeFilters} filter{activeFilters > 1 ? "s" : ""}
             </button>
           )}
-          {showMissingOnly && (
-            <button
-              onClick={() => setShowMissingOnly(false)}
-              className="text-xs text-amber-700 border border-amber-300 rounded-lg px-2.5 py-1 transition-colors bg-amber-50 hover:bg-amber-100"
-            >
-              ✕ Missing only
-            </button>
-          )}
-          {totalMissingRows > 0 && (
-            <button
-              onClick={() => setShowMissingOnly((v) => !v)}
-              title={`${totalMissingRows} rows have at least one missing value — click to show only those rows`}
-              className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors
-                ${showMissingOnly
+
+          {/* ── Missing value button — always visible, fixed position before Filter ── */}
+          <button
+            onClick={() => totalMissingRows > 0 && setShowMissingOnly((v) => !v)}
+            title={totalMissingRows > 0
+              ? `${totalMissingRows} rows have missing values — click to show only those rows`
+              : "No missing values in this dataset"}
+            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors
+              ${totalMissingRows === 0
+                ? "text-gray-300 border-gray-200 cursor-default"
+                : showMissingOnly
                   ? "bg-amber-100 text-amber-700 border-amber-400"
                   : "text-amber-600 border-amber-300 bg-amber-50 hover:bg-amber-100"}`}
-            >
-              ⚠ Missing
-              <span className={`text-[9px] font-bold rounded-full px-1.5 py-0.5 ${showMissingOnly ? "bg-amber-600 text-white" : "bg-amber-200 text-amber-800"}`}>
+          >
+            ⚠ Missing
+            {totalMissingRows > 0 && (
+              <span className={`text-[9px] font-bold rounded-full px-1.5 py-0.5
+                ${showMissingOnly ? "bg-amber-600 text-white" : "bg-amber-200 text-amber-800"}`}>
                 {totalMissingRows}
               </span>
-            </button>
-          )}
+            )}
+          </button>
+
           <button
             onClick={() => setShowFilters((v) => !v)}
             className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors

@@ -793,7 +793,7 @@ def polynomial_regression(req: PolynomialRequest):
     }
 
 
-# ── Linear Mixed Model (LMM) ─────────────────────────────────────────────────
+# ── Linear Mixed Model (LMM) / GLMM auto-router ──────────────────────────────
 
 class LMMRequest(BaseModel):
     session_id: str
@@ -803,19 +803,54 @@ class LMMRequest(BaseModel):
     imputation: Optional[str] = "listwise"
 
 
+def _is_id_like(col: str, series: "pd.Series") -> bool:
+    """Heuristic: column is likely a patient/subject identifier."""
+    name_lower = col.lower()
+    # Name-based check
+    name_match = any(name_lower == tok or name_lower.endswith(tok) or name_lower.startswith(tok)
+                     for tok in ("id", "no", "num", "number", "patient", "subject", "case", "record"))
+    if name_match:
+        return True
+    # Value-based check: near-unique integers
+    n = len(series.dropna())
+    if n < 5:
+        return False
+    try:
+        nunique = series.nunique()
+        return (nunique / n) > 0.95 and pd.api.types.is_integer_dtype(series)
+    except Exception:
+        return False
+
+
 @router.post("/lmm")
 def linear_mixed_model(req: LMMRequest):
+    import re
     import statsmodels.formula.api as smf
 
     df_full = _get_df(req.session_id)
     n_total = len(df_full)
+
+    # ── Guard: ID column as fixed effect ────────────────────────────────────
+    id_in_fe = [c for c in req.fixed_effects if _is_id_like(c, df_full.get(c, pd.Series()))]
+    if id_in_fe:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Column(s) {id_in_fe} look like patient/subject identifiers and cannot be fixed effects. "
+                "Assign them as the Grouping variable (random intercept) instead."
+            ),
+        )
+
     cols = [req.outcome, req.group_col] + req.fixed_effects
     df = apply_imputation(df_full, cols, req.imputation or "listwise")
     n_excluded = n_total - len(df)
 
+    # ── Detect binary outcome → route to GEE ────────────────────────────────
+    outcome_vals = df[req.outcome].dropna().unique()
+    is_binary = set(outcome_vals.tolist()) <= {0, 1, 0.0, 1.0}
+
     # Sanitize column names for formula
     def safe(c: str) -> str:
-        import re
         return re.sub(r"[^0-9a-zA-Z_]", "_", c)
 
     rename = {c: safe(c) for c in cols}
@@ -823,8 +858,63 @@ def linear_mixed_model(req: LMMRequest):
     outcome_s = safe(req.outcome)
     group_s   = safe(req.group_col)
     fe_s      = [safe(f) for f in req.fixed_effects]
+    formula   = f"{outcome_s} ~ " + (" + ".join(fe_s) if fe_s else "1")
 
-    formula = f"{outcome_s} ~ " + (" + ".join(fe_s) if fe_s else "1")
+    if is_binary:
+        # ── GEE with Binomial/Logit — population-averaged GLMM alternative ──
+        # statsmodels MixedLM does not support binomial; GEE is the standard
+        # alternative for clustered binary outcomes (population-averaged effects).
+        import statsmodels.api as sm_api
+        from statsmodels.genmod.generalized_estimating_equations import GEE
+        from statsmodels.genmod.families import Binomial
+        from statsmodels.genmod.cov_struct import Independence
+
+        gee_model = GEE.from_formula(
+            formula, group_s, data=df_r,
+            family=Binomial(),
+            cov_struct=Independence(),
+        )
+        result = gee_model.fit()
+        ci = result.conf_int()
+        coefs = []
+        for var in result.params.index:
+            p_val = float(result.pvalues[var])
+            est   = float(result.params[var])
+            coefs.append({
+                "variable": str(var),
+                "estimate": round(est, 6),
+                "exp_estimate": round(float(np.exp(est)), 4),   # Odds Ratio
+                "se": round(float(result.bse[var]), 6),
+                "z": round(float(result.tvalues[var]), 4),
+                "p": round(p_val, 6),
+                "ci_low":  round(float(ci.loc[var, 0]), 4),
+                "ci_high": round(float(ci.loc[var, 1]), 4),
+                "or_low":  round(float(np.exp(ci.loc[var, 0])), 4),
+                "or_high": round(float(np.exp(ci.loc[var, 1])), 4),
+            })
+        return {
+            "model": "GEE — Binomial/Logit (Binary outcome)",
+            "model_type": "gee_binomial",
+            "note": (
+                "Binary outcome detected. Fitted using Generalized Estimating Equations (GEE) "
+                "with Binomial family and logit link — the population-averaged equivalent of a GLMM. "
+                "Estimates are log-odds (logit scale); exp(β) = Odds Ratio."
+            ),
+            "outcome": req.outcome,
+            "group": req.group_col,
+            "n": int(result.nobs),
+            "n_groups": int(df[req.group_col].nunique()),
+            "n_excluded": n_excluded,
+            "aic": float(result.aic) if hasattr(result, "aic") else None,
+            "bic": float(result.bic) if hasattr(result, "bic") else None,
+            "log_likelihood": float(result.llf) if hasattr(result, "llf") else None,
+            "random_effect_variance": None,
+            "residual_variance": None,
+            "icc": None,
+            "coefficients": coefs,
+        }
+
+    # ── Standard LMM (REML) for continuous outcomes ──────────────────────────
     model = smf.mixedlm(formula, df_r, groups=df_r[group_s]).fit(reml=True)
 
     fe_ci = model.conf_int()
@@ -840,12 +930,12 @@ def linear_mixed_model(req: LMMRequest):
             "ci_high": float(fe_ci.loc[var, 1]),
         })
 
-    # Random effects variance
     re_var = float(model.cov_re.iloc[0, 0]) if model.cov_re is not None and model.cov_re.size > 0 else None
     residual_var = float(model.scale)
 
     return {
         "model": "Linear Mixed Model (REML)",
+        "model_type": "lmm",
         "outcome": req.outcome,
         "group": req.group_col,
         "n": int(model.nobs),
@@ -858,6 +948,60 @@ def linear_mixed_model(req: LMMRequest):
         "residual_variance": residual_var,
         "icc": (re_var / (re_var + residual_var)) if re_var is not None else None,
         "coefficients": coefs,
+    }
+
+
+# ── Wide → Long melt (repeated measures reshape) ──────────────────────────────
+
+class MeltRequest(BaseModel):
+    session_id: str
+    id_col: str                  # e.g. "PatientID"
+    value_cols: List[str]        # e.g. ["INHOSPITALEF", "EF", "CONTROLEF"]
+    time_var_name: str = "TimePoint"
+    value_var_name: str = "Value"
+    time_labels: Optional[List[str]] = None  # custom labels; defaults to col names
+
+
+@router.post("/melt")
+def melt_wide_to_long(req: MeltRequest):
+    """Reshape wide-format repeated measures into long format and save back to session."""
+    df = _get_df(req.session_id)
+    missing = [c for c in [req.id_col] + req.value_cols if c not in df.columns]
+    if missing:
+        raise HTTPException(status_code=422, detail=f"Columns not found: {missing}")
+    if len(req.value_cols) < 2:
+        raise HTTPException(status_code=422, detail="Need at least 2 value columns to melt")
+
+    labels = req.time_labels if req.time_labels and len(req.time_labels) == len(req.value_cols) \
+             else req.value_cols
+
+    # Keep other columns (non-melted) as covariates in the long frame
+    other_cols = [c for c in df.columns if c not in req.value_cols and c != req.id_col]
+    # Limit other cols to avoid explosion
+    keep = [req.id_col] + req.value_cols + other_cols[:20]
+    df_sub = df[[c for c in keep if c in df.columns]].copy()
+
+    df_long = df_sub.melt(
+        id_vars=[c for c in df_sub.columns if c not in req.value_cols],
+        value_vars=req.value_cols,
+        var_name=req.time_var_name,
+        value_name=req.value_var_name,
+    )
+    # Replace column names with readable labels
+    label_map = dict(zip(req.value_cols, labels))
+    df_long[req.time_var_name] = df_long[req.time_var_name].map(label_map)
+
+    # Persist the long-format DataFrame back to the session store
+    from ..services.store import store
+    store.save(req.session_id, df_long)
+
+    return {
+        "rows": len(df_long),
+        "columns": list(df_long.columns),
+        "time_var": req.time_var_name,
+        "value_var": req.value_var_name,
+        "time_points": labels,
+        "preview": df_long.head(10).to_dict(orient="records"),
     }
 
 
@@ -1019,4 +1163,204 @@ def linear_diagnostics(req: DiagRequest):
         "r_squared": float(model.rsquared),
         "residual_se": float(np.sqrt(model.mse_resid)),
         "n": int(model.nobs),
+    }
+
+
+# ── Propensity Score Matching (PSM) ───────────────────────────────────────────
+
+class PSMRequest(BaseModel):
+    session_id: str
+    treatment_col: str
+    covariates: List[str]
+    outcome_col: Optional[str] = None
+    caliper: Optional[float] = 0.2        # fraction of SD of PS
+    ratio: Optional[int] = 1             # 1:ratio matching (1:1 default)
+    imputation: Optional[str] = "listwise"
+
+
+def _compute_smd(s_treated: pd.Series, s_control: pd.Series) -> float:
+    """Standardized Mean Difference for one covariate."""
+    n_uniq = pd.concat([s_treated, s_control]).nunique()
+    if n_uniq <= 2:
+        # Binary variable: Cohen's h-like SMD for proportions
+        p1 = s_treated.mean()
+        p0 = s_control.mean()
+        denom = np.sqrt((p1 * (1 - p1) + p0 * (1 - p0)) / 2)
+        return float(abs(p1 - p0) / denom) if denom > 1e-9 else 0.0
+    # Continuous variable
+    m1, m0 = s_treated.mean(), s_control.mean()
+    sd1, sd0 = s_treated.std(ddof=1), s_control.std(ddof=1)
+    denom = np.sqrt((sd1 ** 2 + sd0 ** 2) / 2)
+    return float(abs(m1 - m0) / denom) if denom > 1e-9 else 0.0
+
+
+@router.post("/psm")
+def propensity_score_matching(req: PSMRequest):
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.neighbors import NearestNeighbors
+
+    df_full = _get_df(req.session_id)
+    needed = [req.treatment_col] + req.covariates + ([req.outcome_col] if req.outcome_col else [])
+    missing_cols = [c for c in needed if c not in df_full.columns]
+    if missing_cols:
+        raise HTTPException(status_code=422, detail=f"Columns not found: {missing_cols}")
+
+    df = apply_imputation(df_full, needed, req.imputation or "listwise")
+
+    # Validate treatment is binary 0/1
+    treat_vals = df[req.treatment_col].astype(float)
+    if not set(treat_vals.unique().tolist()) <= {0, 1, 0.0, 1.0}:
+        raise HTTPException(status_code=422,
+            detail=f"Treatment column '{req.treatment_col}' must be binary (0 = control, 1 = treated).")
+
+    # ── Step 1: Propensity scores via Logistic Regression ────────────────────
+    X = pd.get_dummies(df[req.covariates], drop_first=True).astype(float)
+    y = treat_vals.astype(int).values
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    lr = LogisticRegression(max_iter=1000, solver="lbfgs", C=1.0)
+    lr.fit(X_scaled, y)
+    ps = lr.predict_proba(X_scaled)[:, 1]     # propensity score for each row
+
+    df = df.copy()
+    df["_ps_"] = ps
+    df["_treat_"] = y
+
+    # ── Step 2: Nearest-Neighbour matching with caliper (without replacement) ─
+    caliper_dist = (req.caliper or 0.2) * ps.std()
+    ratio = max(1, req.ratio or 1)
+
+    treated_idx = np.where(y == 1)[0]
+    control_idx = np.where(y == 0)[0]
+
+    if len(treated_idx) == 0 or len(control_idx) == 0:
+        raise HTTPException(status_code=422, detail="Need both treated (1) and control (0) patients.")
+
+    # KD-tree on control propensity scores
+    ps_control = ps[control_idx].reshape(-1, 1)
+    knn = NearestNeighbors(n_neighbors=min(ratio * 5, len(control_idx)), metric="euclidean")
+    knn.fit(ps_control)
+
+    matched_treated = []
+    matched_controls = []
+    used_controls = set()
+
+    for ti in treated_idx:
+        ps_t = np.array([[ps[ti]]])
+        distances, neighbors = knn.kneighbors(ps_t)
+        chosen = []
+        for dist, nb in zip(distances[0], neighbors[0]):
+            if dist <= caliper_dist and control_idx[nb] not in used_controls:
+                chosen.append(control_idx[nb])
+                used_controls.add(control_idx[nb])
+                if len(chosen) == ratio:
+                    break
+        if len(chosen) == ratio:   # only keep fully matched treated units
+            matched_treated.append(ti)
+            matched_controls.extend(chosen)
+
+    n_matched_treated = len(matched_treated)
+    n_matched_controls = len(matched_controls)
+
+    if n_matched_treated == 0:
+        raise HTTPException(status_code=422,
+            detail=f"No matches found within caliper {req.caliper}. "
+                   "Try widening the caliper or check that treatment groups overlap in covariate space.")
+
+    matched_all_idx = matched_treated + matched_controls
+    df_matched = df.iloc[matched_all_idx].copy()
+
+    # ── Step 3: SMD before and after matching ─────────────────────────────────
+    smd_before, smd_after = {}, {}
+    for cov in req.covariates:
+        col = df[cov].astype(float) if df[cov].dtype != object else df[cov]
+        col_m = df_matched[cov].astype(float) if df_matched[cov].dtype != object else df_matched[cov]
+        smd_before[cov] = round(_compute_smd(
+            col[treat_vals == 1], col[treat_vals == 0]), 4)
+        smd_after[cov]  = round(_compute_smd(
+            col_m[df_matched["_treat_"] == 1],
+            col_m[df_matched["_treat_"] == 0]), 4)
+
+    avg_smd_before = float(np.mean(list(smd_before.values())))
+    avg_smd_after  = float(np.mean(list(smd_after.values())))
+    reduction_pct  = float((avg_smd_before - avg_smd_after) / avg_smd_before * 100) if avg_smd_before > 0 else 0.0
+
+    n_all_treated = int((y == 1).sum())
+    n_all_control = int((y == 0).sum())
+    n_unmatched   = n_all_treated - n_matched_treated
+
+    # Balance flag: all SMDs < 0.10 after matching
+    balance_achieved = all(v < 0.10 for v in smd_after.values())
+
+    # ── Step 4: PS distribution for overlap plot ──────────────────────────────
+    ps_dist = {
+        "treated_unmatched": ps[treated_idx].tolist(),
+        "control_unmatched": ps[control_idx].tolist(),
+        "treated_matched":   ps[matched_treated].tolist(),
+        "control_matched":   ps[matched_controls].tolist(),
+    }
+
+    # ── Outcome analysis on matched dataset ──────────────────────────────────
+    outcome_result = None
+    if req.outcome_col and req.outcome_col in df_matched.columns:
+        try:
+            y_out = df_matched[req.outcome_col].astype(float).astype(int)
+            out_vals = set(y_out.unique().tolist())
+            if out_vals <= {0, 1}:
+                # Binary: logistic on matched data
+                feat_cols = [c for c in req.covariates if c in df_matched.columns]
+                X_out = pd.get_dummies(df_matched[feat_cols + [req.treatment_col]], drop_first=True).astype(float)
+                X_out = sm.add_constant(X_out)
+                m_out = sm.Logit(y_out.values, X_out).fit(disp=False)
+                ci_out = m_out.conf_int()
+                coefs_out = []
+                for var in m_out.params.index:
+                    est = float(m_out.params[var])
+                    coefs_out.append({
+                        "variable": str(var),
+                        "estimate": round(est, 6),
+                        "or": round(float(np.exp(est)), 4),
+                        "se": round(float(m_out.bse[var]), 6),
+                        "z": round(float(m_out.tvalues[var]), 4),
+                        "p": round(float(m_out.pvalues[var]), 6),
+                        "ci_low":  round(float(ci_out.loc[var, 0]), 4),
+                        "ci_high": round(float(ci_out.loc[var, 1]), 4),
+                        "or_low":  round(float(np.exp(ci_out.loc[var, 0])), 4),
+                        "or_high": round(float(np.exp(ci_out.loc[var, 1])), 4),
+                    })
+                outcome_result = {
+                    "type": "logistic",
+                    "model": "Logistic Regression (matched cohort)",
+                    "n": int(len(df_matched)),
+                    "coefficients": coefs_out,
+                    "aic": round(float(m_out.aic), 2),
+                    "bic": round(float(m_out.bic), 2),
+                }
+        except Exception as ex:
+            outcome_result = {"error": str(ex)}
+
+    # Persist matched dataset for downstream analysis
+    df_export = df_matched.drop(columns=["_ps_", "_treat_"], errors="ignore")
+    store.save(req.session_id + "_psm", df_export)
+
+    return {
+        "n_total":            int(len(df)),
+        "n_treated":          n_all_treated,
+        "n_control":          n_all_control,
+        "n_matched_pairs":    n_matched_treated,
+        "n_matched_controls": n_matched_controls,
+        "n_unmatched":        n_unmatched,
+        "caliper_used":       round(float(caliper_dist), 6),
+        "balance_achieved":   balance_achieved,
+        "avg_smd_before":     round(avg_smd_before, 4),
+        "avg_smd_after":      round(avg_smd_after, 4),
+        "reduction_pct":      round(reduction_pct, 1),
+        "smd_before":         smd_before,
+        "smd_after":          smd_after,
+        "ps_distribution":    ps_dist,
+        "outcome_result":     outcome_result,
+        "matched_session_id": req.session_id + "_psm",
     }

@@ -482,7 +482,7 @@ function RecodeTab({
     fetchingRef.current.add(colName);
     getUniqueValues(sessionId, colName)
       .then((r) => {
-        const vals: (string | number | null)[] = r.data ?? [];
+        const vals: string[] = r.data?.values ?? [];
         setColValues((prev) => ({
           ...prev,
           [colName]: vals

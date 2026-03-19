@@ -57,7 +57,15 @@ interface PairResult {
   ci_high: number;
   method: string;
   label: string;
-  normality: Record<string, { p: number; normal: boolean }>;
+  normality_test: string;   // "Shapiro-Wilk" | "Lilliefors" | "Skewness (CLT bypass)"
+  normality: Record<string, {
+    p: number | null;
+    statistic: number | null;
+    normal: boolean;
+    skewness: number;
+    test: string;
+    bypass: string | null;
+  }>;
   scatter: { x: number[]; y: number[] };
   regression_line: { x: number[]; y: number[] };
   ci_band: { x: number[]; y_upper: number[]; y_lower: number[] };
@@ -185,19 +193,39 @@ function PairwiseTab({ sessionId, columns }: { sessionId: string; columns: strin
         {active && (
           <div className="panel space-y-2 text-xs">
             <p className="text-gray-500 font-semibold">
-              Shapiro-Wilk Normality
-              <Tip text="Tests whether each variable follows a normal (bell-curve) distribution. ✓ = normal (p > 0.05). If either variable is non-normal, Spearman ρ is preferred over Pearson r." wide />
+              Normality Assessment
+              <Tip wide text={
+                active.n <= 2000
+                  ? `Shapiro-Wilk (n = ${active.n}): gold-standard test for normality in small-to-medium samples. ✓ = normal (p ≥ 0.05). If either variable is non-normal, Spearman ρ is preferred.`
+                  : `Large sample (n = ${active.n} > 2000). Two-step approach: (1) Skewness check — if |skewness| ≤ 1.5, the Central Limit Theorem ensures Pearson r remains valid regardless of distribution shape. (2) If |skewness| > 1.5, Lilliefors-corrected KS test is used (standard KS adjusted for estimated parameters). Standard KS without Lilliefors correction would give anti-conservative p-values.`
+              } />
             </p>
-            {Object.entries(active.normality).map(([v, n]) => (
-              <div key={v} className="flex justify-between">
-                <span className="text-gray-600 truncate max-w-[110px]">{v}</span>
-                <span className={n.normal ? "text-green-600" : "text-red-500"}>
-                  p={pFmt(n.p)} {n.normal ? "✓" : "✗"}
-                </span>
+            {Object.entries(active.normality).map(([v, nm]) => (
+              <div key={v} className="space-y-0.5">
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-600 truncate max-w-[100px]" title={v}>{v}</span>
+                  <div className="flex items-center gap-1.5">
+                    {nm.bypass === "clt_skew" ? (
+                      <span className="text-green-600 font-medium" title="CLT bypass: mild skewness at large n — Pearson is robust">
+                        CLT ✓
+                      </span>
+                    ) : (
+                      <span className={nm.normal ? "text-green-600" : "text-red-500"}>
+                        {nm.p != null ? `p=${pFmt(nm.p)}` : ""} {nm.normal ? "✓" : "✗"}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex justify-between text-[10px] text-gray-400 pl-0.5">
+                  <span>{nm.test}</span>
+                  <span title="Skewness: 0 = symmetric. |skew| < 1 = mild, 1–2 = moderate, > 2 = severe">
+                    skew={nm.skewness.toFixed(2)}
+                  </span>
+                </div>
               </div>
             ))}
-            <p className="text-gray-400">
-              Method: <span className="text-indigo-600">{active.method === "pearson" ? "Pearson r" : "Spearman ρ"}</span>
+            <p className="text-gray-400 border-t border-gray-100 pt-1.5">
+              Correlation: <span className="text-indigo-600">{active.method === "pearson" ? "Pearson r" : "Spearman ρ"}</span>
             </p>
           </div>
         )}
@@ -271,7 +299,12 @@ function PairwiseTab({ sessionId, columns }: { sessionId: string; columns: strin
                 </table>
               </div>
               <div className="flex flex-wrap gap-3 mt-1.5 text-[10px] text-gray-400 border-t border-gray-100 pt-1.5">
-                <span>* p&lt;0.05 &nbsp;** p&lt;0.01 &nbsp;*** p&lt;0.001</span>
+                <span title="Significance stars show how unlikely the result is by chance. * means p < 0.05 (significant), ** means p < 0.01 (highly significant), *** means p < 0.001 (very highly significant). A result with *** has less than 0.1% probability of occurring by chance alone.">
+                  <span className="text-amber-500 font-semibold">*</span> p&lt;0.05 &nbsp;
+                  <span className="text-amber-500 font-semibold">**</span> p&lt;0.01 &nbsp;
+                  <span className="text-amber-500 font-semibold">***</span> p&lt;0.001
+                  <span className="ml-1 cursor-help text-gray-300" title="Significance stars: * p<0.05 (significant — less than 5% chance this is a fluke), ** p<0.01 (highly significant — less than 1% chance), *** p<0.001 (very highly significant — less than 0.1% chance). More stars = stronger evidence against a chance finding.">ⓘ</span>
+                </span>
                 <span className="text-amber-500">⚠ High collinearity (|r| ≥ 0.70)</span>
                 {method === "auto" && <span className="text-blue-500">S = auto-switched to Spearman</span>}
               </div>
@@ -282,7 +315,10 @@ function PairwiseTab({ sessionId, columns }: { sessionId: string; columns: strin
               <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-xs text-blue-700 flex-shrink-0">
                 <span>⚡</span>
                 <span>
-                  <strong>Switched to Spearman:</strong> Data is not normally distributed (Shapiro-Wilk p &lt; 0.05). Pearson would give misleading results on skewed data.
+                  <strong>Switched to Spearman:</strong>{" "}
+                  {active.normality_test === "Lilliefors"
+                    ? `Marked skewness detected (|skew| > 1.5) and Lilliefors p < 0.05 (n = ${active.n}). Distribution is non-normal; Spearman ρ is more appropriate.`
+                    : `Data is not normally distributed (${active.normality_test ?? "Shapiro-Wilk"} p < 0.05). Pearson would give misleading results on skewed data.`}
                 </span>
               </div>
             )}

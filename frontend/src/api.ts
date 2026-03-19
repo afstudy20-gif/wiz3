@@ -46,6 +46,9 @@ export const runLMM         = (data: object) => api.post("/api/models/lmm", data
 export const runGamma       = (data: object) => api.post("/api/models/gamma", data);
 export const runNegBinom    = (data: object) => api.post("/api/models/negbinom", data);
 export const runLinearDiag  = (data: object) => api.post("/api/models/linear_diag", data);
+export const runMelt          = (data: object) => api.post("/api/models/melt", data);
+export const refreshSession   = (sessionId: string) => api.get(`/api/stats/${sessionId}/refresh`);
+export const runPSM           = (data: object) => api.post("/api/models/psm", data);
 
 export const getSparklines = (sessionId: string) =>
   api.get(`/api/stats/${sessionId}/sparklines`);

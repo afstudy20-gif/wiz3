@@ -4,6 +4,50 @@ import api from "../api";
 import Plot from "../PlotComponent";
 import ResultExporter from "./ResultExporter";
 
+// ── Inline sparkline SVG (real histogram / category bars) ────────────────────
+
+interface SparkData { type: string; data: number[]; }
+
+function Sparkline({ spark }: { spark: SparkData }) {
+  const W = 40, H = 12;
+  const { type, data } = spark;
+  if (!data || data.length === 0) return null;
+  const max = Math.max(...data);
+  if (max === 0) return null;
+
+  if (type === "numeric") {
+    const bw = W / data.length;
+    return (
+      <svg width={W} height={H} style={{ display: "block", flexShrink: 0 }}>
+        {data.map((v, i) => {
+          const bh = Math.max(1, (v / max) * H);
+          return (
+            <rect key={i} x={i * bw} y={H - bh}
+              width={Math.max(bw - 0.5, 0.5)} height={bh}
+              fill="#6366f1" opacity={0.7} rx={0.5} />
+          );
+        })}
+      </svg>
+    );
+  }
+
+  // categorical → proportional horizontal bars
+  const total = data.reduce((a, b) => a + b, 0);
+  const CATS = ["#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6"];
+  let cx = 0;
+  return (
+    <svg width={W} height={H} style={{ display: "block", flexShrink: 0 }}>
+      {data.map((v, i) => {
+        const bw = (v / total) * W;
+        const rect = <rect key={i} x={cx} y={0} width={Math.max(bw - 0.5, 0.5)} height={H}
+          fill={CATS[i % CATS.length]} opacity={0.8} />;
+        cx += bw;
+        return rect;
+      })}
+    </svg>
+  );
+}
+
 const BASE_LAYOUT = {
   paper_bgcolor: "transparent",
   plot_bgcolor: "#f9fafb",
@@ -483,6 +527,7 @@ export default function DescriptivePanel() {
   const session = useStore((s) => s.session);
   const updateColumnKind = useStore((s) => s.updateColumnKind);
   const [colMeta, setColMeta] = useState<any[]>([]);
+  const [sparklines, setSparklines] = useState<Record<string, SparkData>>({});
   const [selected, setSelected] = useState<string | null>(null);
   const [summary, setSummary] = useState<any | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
@@ -491,6 +536,10 @@ export default function DescriptivePanel() {
 
   useEffect(() => {
     if (!session) return;
+    // Fetch real sparkline histograms for all columns
+    api.get(`/api/stats/${session.session_id}/sparklines`).then((r) => {
+      setSparklines(r.data as Record<string, SparkData>);
+    });
     api.get(`/api/stats/${session.session_id}/descriptive`).then((r) => {
       const numStats = r.data as Record<string, any>;
       const metas = session.columns.map((c) => {
@@ -575,21 +624,12 @@ export default function DescriptivePanel() {
                   </span>
                   <span className="text-xs text-gray-700 truncate">{c.name}</span>
                 </div>
-                {meta && (
+                {sparklines[c.name] ? (
                   <div className="flex-shrink-0 ml-1">
-                    {c.kind === "categorical" ? (
-                      <div className="w-10 h-2.5 bg-gray-200 rounded-sm overflow-hidden flex">
-                        <div className="h-full bg-purple-400" style={{ width: "60%" }} />
-                        <div className="h-full bg-amber-400" style={{ width: "40%" }} />
-                      </div>
-                    ) : (
-                      <div className="w-10 h-2.5 bg-gray-200 rounded-sm overflow-hidden flex items-end gap-px px-px">
-                        {[0.3, 0.6, 1, 0.8, 0.5, 0.4, 0.7, 0.9].map((h, i) => (
-                          <div key={i} className="flex-1 bg-indigo-400 rounded-sm" style={{ height: `${h * 100}%` }} />
-                        ))}
-                      </div>
-                    )}
+                    <Sparkline spark={sparklines[c.name]} />
                   </div>
+                ) : meta && (
+                  <div className="w-10 h-3 bg-gray-100 rounded flex-shrink-0 ml-1 animate-pulse" />
                 )}
               </div>
             );

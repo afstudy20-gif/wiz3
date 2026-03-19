@@ -363,7 +363,7 @@ export default function Table1Panel() {
         <div className="p-3 border-t border-gray-200 space-y-2 flex-shrink-0">
           <button className="btn-primary w-full text-sm py-2" onClick={run}
             disabled={loading || selected.size === 0}>
-            {loading ? "Computing…" : "Generate Table 1"}
+            {loading ? "Computing…" : "Generate Table"}
           </button>
           {result && (
             <ResultExporter
@@ -383,11 +383,11 @@ export default function Table1Panel() {
         {!result && !loading && (
           <div className="h-full flex flex-col items-center justify-center text-gray-400 space-y-3">
             <div className="text-5xl opacity-20">📋</div>
-            <p className="text-base font-medium text-gray-500">Table 1 — Baseline Characteristics</p>
+            <p className="text-base font-medium text-gray-500">Table — Baseline Characteristics</p>
             <div className="text-xs text-gray-400 space-y-1 text-center leading-relaxed">
               <p>1. Pick a <span className="text-gray-500">Group by</span> column (e.g. outcome, treatment)</p>
               <p>2. Choose <span className="text-gray-500">Statistics</span> to display</p>
-              <p>3. Select variables · Click <span className="text-gray-500">Generate Table 1</span></p>
+              <p>3. Select variables · Click <span className="text-gray-500">Generate Table</span></p>
             </div>
           </div>
         )}

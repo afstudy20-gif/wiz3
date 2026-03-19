@@ -561,25 +561,56 @@ export default function ROCPanel() {
                   </button>
                   {cmpError && <p className="text-red-500 text-xs">{cmpError}</p>}
                   {cmpResult && (
-                    <div className="space-y-1 mt-1">
-                      <div className={`text-xs px-2 py-1.5 rounded font-semibold border
-                        ${cmpResult.significant ? "border-indigo-300 bg-indigo-50 text-indigo-700" : "border-gray-200 bg-gray-50 text-gray-500"}`}>
-                        {cmpResult.significant ? "Significant difference ✓" : "No significant difference"}
+                    <div className="space-y-2 mt-1">
+                      {/* Significance badge */}
+                      <div className={`text-xs px-2 py-1.5 rounded font-semibold border flex items-center gap-1.5
+                        ${cmpResult.significant ? "border-green-300 bg-green-50 text-green-700" : "border-gray-200 bg-gray-50 text-gray-500"}`}>
+                        {cmpResult.significant ? "✓ Significant difference (p < 0.05)" : "No significant difference (p ≥ 0.05)"}
                       </div>
+
+                      {/* AUC comparison header */}
+                      <div className="grid grid-cols-3 gap-1 text-center">
+                        <div className="bg-blue-50 rounded p-1.5">
+                          <p className="text-[9px] text-blue-400 uppercase tracking-wide font-semibold">Baseline AUC</p>
+                          <p className="text-sm font-bold font-mono text-blue-700">{cmpResult.auc_2.toFixed(3)}</p>
+                          <p className="text-[9px] text-blue-400">{cmpResult.ci_2_low.toFixed(3)}–{cmpResult.ci_2_high.toFixed(3)}</p>
+                        </div>
+                        <div className="bg-rose-50 rounded p-1.5">
+                          <p className="text-[9px] text-rose-400 uppercase tracking-wide font-semibold">New AUC</p>
+                          <p className="text-sm font-bold font-mono text-rose-700">{cmpResult.auc_1.toFixed(3)}</p>
+                          <p className="text-[9px] text-rose-400">{cmpResult.ci_1_low.toFixed(3)}–{cmpResult.ci_1_high.toFixed(3)}</p>
+                        </div>
+                        <div className={`rounded p-1.5 ${cmpResult.significant ? "bg-green-50" : "bg-gray-50"}`}>
+                          <p className="text-[9px] text-gray-400 uppercase tracking-wide font-semibold">ΔAUC</p>
+                          <p className={`text-sm font-bold font-mono ${cmpResult.significant ? "text-green-700" : "text-gray-600"}`}>
+                            {cmpResult.difference > 0 ? "+" : ""}{cmpResult.difference.toFixed(3)}
+                          </p>
+                          <p className="text-[9px] text-gray-400">
+                            {cmpResult.ci_diff_low.toFixed(3)} to {cmpResult.ci_diff_high.toFixed(3)}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Stat details */}
                       {[
-                        [`AUC — ${cmpResult.score_1}`, cmpResult.auc_1],
-                        [`AUC — ${cmpResult.score_2}`, cmpResult.auc_2],
-                        ["ΔAUC",    cmpResult.difference.toFixed(4)],
-                        ["Z",       cmpResult.z.toFixed(3)],
-                        ["p-value", fmtP(cmpResult.p)],
-                        ["n",       cmpResult.n],
+                        ["Z statistic", cmpResult.z.toFixed(3)],
+                        ["DeLong p-value", fmtP(cmpResult.p)],
+                        ["n (paired)", cmpResult.n],
                       ].map(([k, v]: any) => (
                         <div key={k} className="flex justify-between border-b border-gray-100 py-0.5 text-xs">
-                          <span className="text-gray-400 truncate">{k}</span>
-                          <span className="text-gray-700 font-mono ml-2 shrink-0">{v}</span>
+                          <span className="text-gray-400">{k}</span>
+                          <span className={`font-mono ml-2 shrink-0 ${k === "DeLong p-value" && cmpResult.significant ? "text-green-700 font-semibold" : "text-gray-700"}`}>{v}</span>
                         </div>
                       ))}
-                      <p className="text-gray-400 text-xs italic pt-1">{cmpResult.interpretation}</p>
+
+                      {/* Journal-format citation */}
+                      <div className="rounded bg-amber-50 border border-amber-200 px-2 py-2 text-[10px] text-amber-800 leading-relaxed">
+                        <p className="font-semibold mb-0.5">Publication format (Q1/Q2):</p>
+                        <p className="italic">{cmpResult.interpretation}</p>
+                      </div>
+
+                      {/* Reminder that the plot is shown on the right */}
+                      <p className="text-[10px] text-gray-400 text-center">↑ Overlaid ROC plot shown in the main area above</p>
                     </div>
                   )}
                 </>
@@ -885,6 +916,79 @@ export default function ROCPanel() {
                   bgcolor: "rgba(249,250,251,0.9)", bordercolor: "#e5e7eb", borderwidth: 1, borderpad: 5,
                   xanchor: "right" as const, yanchor: "bottom" as const,
                 }],
+              }}
+              onInitialized={(_: object, gd: HTMLElement) => { rocPlotRef.current = gd; }}
+              onUpdate={(_: object, gd: HTMLElement)      => { rocPlotRef.current = gd; }}
+              style={{ width: "100%", height: "100%" }}
+              useResizeHandler
+              config={{ responsive: true, displaylogo: false, displayModeBar: false }}
+            />
+          )}
+
+          {/* ── DeLong comparison plot (publication quality) ── */}
+          {mode === "single" && cmpResult && cmpResult.curve_1 && cmpResult.curve_2 && (
+            <Plot
+              data={[
+                // Baseline model (blue dashed)
+                {
+                  type: "scatter", mode: "lines",
+                  x: cmpResult.curve_2.map((p: any) => p.fpr),
+                  y: cmpResult.curve_2.map((p: any) => p.tpr),
+                  line: { color: "#2563eb", width: 2.5, dash: "dash" },
+                  name: `Baseline (${cmpResult.score_2}): AUC = ${cmpResult.auc_2.toFixed(3)} (${cmpResult.ci_2_low.toFixed(3)}–${cmpResult.ci_2_high.toFixed(3)})`,
+                },
+                // New model (red solid)
+                {
+                  type: "scatter", mode: "lines",
+                  x: cmpResult.curve_1.map((p: any) => p.fpr),
+                  y: cmpResult.curve_1.map((p: any) => p.tpr),
+                  line: { color: "#e11d48", width: 3, dash: "solid" },
+                  name: `New model (${cmpResult.score_1}): AUC = ${cmpResult.auc_1.toFixed(3)} (${cmpResult.ci_1_low.toFixed(3)}–${cmpResult.ci_1_high.toFixed(3)})`,
+                },
+                // Chance line
+                {
+                  type: "scatter", mode: "lines",
+                  x: [0, 1], y: [0, 1],
+                  line: { color: "#9ca3af", width: 1.5, dash: "dot" },
+                  name: "Reference (chance)",
+                  showlegend: true,
+                },
+              ]}
+              layout={{
+                ...PLOT_LAYOUT,
+                xaxis: { ...(PLOT_LAYOUT.xaxis as object), showgrid: showGrid },
+                yaxis: { ...(PLOT_LAYOUT.yaxis as object), showgrid: showGrid },
+                autosize: true,
+                title: {
+                  text: `ROC Analysis: Model Comparison — ${cmpResult.score_1} vs. ${cmpResult.score_2}`,
+                  font: { color: "#374151", size: 13 },
+                },
+                legend: {
+                  font: { color: "#374151", size: 11 },
+                  bgcolor: "rgba(249,250,251,0.95)",
+                  bordercolor: "#e5e7eb", borderwidth: 1,
+                  x: 0.5, y: 0.03,
+                  xanchor: "left" as const, yanchor: "bottom" as const,
+                },
+                annotations: [
+                  // DeLong p-value box inside plot (top-left — journal standard)
+                  {
+                    x: 0.02, y: 0.98,
+                    xref: "paper" as const, yref: "paper" as const,
+                    xanchor: "left" as const, yanchor: "top" as const,
+                    text: [
+                      `<b>ΔAUC = ${cmpResult.difference > 0 ? "+" : ""}${cmpResult.difference.toFixed(3)}</b>`,
+                      `95% CI: ${cmpResult.ci_diff_low.toFixed(3)} to ${cmpResult.ci_diff_high.toFixed(3)}`,
+                      `DeLong p ${cmpResult.p < 0.001 ? "< 0.001" : "= " + cmpResult.p.toFixed(3)}`,
+                    ].join("<br>"),
+                    showarrow: false,
+                    font: { color: cmpResult.significant ? "#15803d" : "#6b7280", size: 11 },
+                    bgcolor: cmpResult.significant ? "rgba(240,253,244,0.95)" : "rgba(249,250,251,0.95)",
+                    bordercolor: cmpResult.significant ? "#86efac" : "#e5e7eb",
+                    borderwidth: 1, borderpad: 6,
+                    align: "left" as const,
+                  },
+                ],
               }}
               onInitialized={(_: object, gd: HTMLElement) => { rocPlotRef.current = gd; }}
               onUpdate={(_: object, gd: HTMLElement)      => { rocPlotRef.current = gd; }}

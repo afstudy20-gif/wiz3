@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Upload, FileSpreadsheet } from "lucide-react";
+import { Upload } from "lucide-react";
 import { uploadFile } from "../api";
 import { useStore } from "../store";
 
@@ -38,11 +38,9 @@ export default function UploadZone() {
   return (
     <div className="flex flex-col items-center justify-center min-h-screen gap-8 p-8 bg-gray-50">
       <div className="flex items-center gap-3">
-        <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center">
-          <FileSpreadsheet size={22} className="text-white" />
-        </div>
+        <img src="/favicon.svg" alt="uStat logo" className="w-10 h-10 rounded-xl" />
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 leading-tight">YuStat</h1>
+          <h1 className="text-2xl font-bold text-gray-900 leading-tight">uStat</h1>
           <p className="text-xs text-gray-400 leading-none">Statistical Analysis Platform</p>
         </div>
       </div>
