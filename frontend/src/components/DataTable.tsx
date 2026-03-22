@@ -158,10 +158,10 @@ function SelectCasesModal({
         </div>
 
         {/* Body — two columns */}
-        <div className="flex flex-1 min-h-0 overflow-hidden">
+        <div className="flex" style={{ minHeight: 0, overflow: "hidden" }}>
 
           {/* Left: condition builder */}
-          <div className="flex-1 flex flex-col gap-3 px-6 py-4 overflow-y-auto border-r border-gray-100">
+          <div className="flex-1 flex flex-col gap-3 px-6 py-4 overflow-y-auto border-r border-gray-100" style={{ minWidth: 0 }}>
             <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Conditions</p>
 
             {conditions.map((cond, i) => {
@@ -244,9 +244,9 @@ function SelectCasesModal({
           </div>
 
           {/* Right: values panel */}
-          <div className="w-52 flex flex-col px-4 py-4 flex-shrink-0">
-            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">
-              Values — <span className="text-violet-600 normal-case font-medium">{activeCol}</span>
+          <div style={{ width: 200, flexShrink: 0, display: "flex", flexDirection: "column", padding: "16px 12px", overflowY: "auto" }}>
+            <p style={{ fontSize: 10, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+              Values — <span style={{ color: "#7c3aed", textTransform: "none", fontWeight: 500 }}>{activeCol}</span>
             </p>
 
             {showValuePanel ? (
@@ -257,26 +257,39 @@ function SelectCasesModal({
                   placeholder="search values…"
                   value={valSearch}
                   onChange={(e) => setValSearch(e.target.value)}
-                  className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 mb-2 focus:outline-none focus:border-violet-400"
+                  style={{ width: "100%", fontSize: 11, border: "1px solid #e5e7eb", borderRadius: 8, padding: "5px 10px", marginBottom: 6, outline: "none", boxSizing: "border-box", color: "#111827" }}
                 />
 
                 {/* Value list */}
-                <div className="flex-1 overflow-y-auto flex flex-col gap-1 min-h-0" style={{ maxHeight: 260 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   {valuesLoading ? (
-                    <p className="text-xs text-gray-400 animate-pulse text-center py-4">Loading…</p>
+                    <p style={{ fontSize: 11, color: "#9ca3af", textAlign: "center", padding: "16px 0" }}>Loading…</p>
                   ) : filteredValues.length === 0 ? (
-                    <p className="text-xs text-gray-300 text-center py-4">No values</p>
+                    <p style={{ fontSize: 11, color: "#d1d5db", textAlign: "center", padding: "16px 0" }}>No values</p>
                   ) : (
-                    filteredValues.map((val) => {
+                    filteredValues.map((val, vi) => {
                       const isSelected = conditions[activeCond]?.value === val;
                       return (
                         <button
-                          key={val}
+                          key={`${val}-${vi}`}
                           onClick={() => updateCond(activeCond, { value: val })}
-                          className={`text-left text-xs px-3 py-1.5 rounded-lg border transition-colors w-full truncate
-                            ${isSelected
-                              ? "bg-violet-600 text-white border-violet-600 font-medium"
-                              : "bg-white text-gray-700 border-gray-200 hover:bg-violet-50 hover:border-violet-300"}`}
+                          style={{
+                            display: "block",
+                            width: "100%",
+                            textAlign: "left",
+                            fontSize: 12,
+                            padding: "5px 10px",
+                            borderRadius: 8,
+                            border: isSelected ? "1px solid #7c3aed" : "1px solid #e5e7eb",
+                            background: isSelected ? "#7c3aed" : "#f9fafb",
+                            color: isSelected ? "#ffffff" : "#111827",
+                            fontWeight: isSelected ? 600 : 400,
+                            cursor: "pointer",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            boxSizing: "border-box",
+                          }}
                         >
                           {val}
                         </button>
@@ -285,12 +298,14 @@ function SelectCasesModal({
                   )}
                 </div>
 
-                <p className="text-[10px] text-gray-300 mt-2 text-center">
+                <p style={{ fontSize: 10, color: "#d1d5db", textAlign: "center", marginTop: 6 }}>
                   {filteredValues.length} value{filteredValues.length !== 1 ? "s" : ""}
                 </p>
               </>
             ) : (
-              <p className="text-xs text-gray-300 italic text-center py-8">No value needed for this operator</p>
+              <p style={{ fontSize: 11, color: "#d1d5db", fontStyle: "italic", textAlign: "center", paddingTop: 32 }}>
+                No value needed
+              </p>
             )}
           </div>
         </div>

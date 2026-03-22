@@ -814,6 +814,5 @@ def unique_values(session_id: str, col_name: str):
     df = _get_df(session_id)
     if col_name not in df.columns:
         raise HTTPException(status_code=404, detail=f"Column '{col_name}' not found")
-    vals = df[col_name].dropna().unique().tolist()
-    # Limit to 50 unique values for the UI
-    return {"values": [str(v) for v in vals[:50]]}
+    vals = sorted(df[col_name].dropna().unique().tolist(), key=lambda x: (str(type(x).__name__), x))
+    return {"values": [str(v) for v in vals[:200]]}
