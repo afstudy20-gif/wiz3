@@ -1180,22 +1180,49 @@ class PSMRequest(BaseModel):
 
 def _compute_smd(s_treated: pd.Series, s_control: pd.Series) -> float:
     """Standardized Mean Difference for one covariate."""
+    # Convert categorical/object to numeric via label encoding
+    if s_treated.dtype == object or str(s_treated.dtype).startswith("category"):
+        combined = pd.concat([s_treated, s_control]).dropna()
+        cats = sorted(combined.unique().tolist(), key=str)
+        cat_map = {c: i for i, c in enumerate(cats)}
+        s_treated = s_treated.map(cat_map)
+        s_control = s_control.map(cat_map)
+
+    s_treated = pd.to_numeric(s_treated, errors="coerce").dropna()
+    s_control = pd.to_numeric(s_control, errors="coerce").dropna()
+
+    if len(s_treated) == 0 or len(s_control) == 0:
+        return 0.0
+
     n_uniq = pd.concat([s_treated, s_control]).nunique()
     if n_uniq <= 2:
-        # Binary variable: Cohen's h-like SMD for proportions
-        p1 = s_treated.mean()
-        p0 = s_control.mean()
+        p1 = float(s_treated.mean())
+        p0 = float(s_control.mean())
         denom = np.sqrt((p1 * (1 - p1) + p0 * (1 - p0)) / 2)
         return float(abs(p1 - p0) / denom) if denom > 1e-9 else 0.0
     # Continuous variable
-    m1, m0 = s_treated.mean(), s_control.mean()
-    sd1, sd0 = s_treated.std(ddof=1), s_control.std(ddof=1)
+    m1, m0 = float(s_treated.mean()), float(s_control.mean())
+    sd1, sd0 = float(s_treated.std(ddof=1)), float(s_control.std(ddof=1))
     denom = np.sqrt((sd1 ** 2 + sd0 ** 2) / 2)
     return float(abs(m1 - m0) / denom) if denom > 1e-9 else 0.0
 
 
 @router.post("/psm")
 def propensity_score_matching(req: PSMRequest):
+    import traceback
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.neighbors import NearestNeighbors
+
+    try:
+        return _run_psm(req)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
+
+
+def _run_psm(req: PSMRequest):
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
     from sklearn.neighbors import NearestNeighbors
@@ -1206,7 +1233,7 @@ def propensity_score_matching(req: PSMRequest):
     if missing_cols:
         raise HTTPException(status_code=422, detail=f"Columns not found: {missing_cols}")
 
-    df = apply_imputation(df_full, needed, req.imputation or "listwise")
+    df = apply_imputation(df_full[needed], needed, req.imputation or "listwise").reset_index(drop=True)
 
     # Validate treatment is binary 0/1
     treat_vals = df[req.treatment_col].astype(float)
@@ -1275,11 +1302,12 @@ def propensity_score_matching(req: PSMRequest):
 
     # ── Step 3: SMD before and after matching ─────────────────────────────────
     smd_before, smd_after = {}, {}
+    treat_mask = df["_treat_"].values   # numpy array, same length as df (reset index)
     for cov in req.covariates:
-        col = df[cov].astype(float) if df[cov].dtype != object else df[cov]
-        col_m = df_matched[cov].astype(float) if df_matched[cov].dtype != object else df_matched[cov]
+        col   = df[cov]
+        col_m = df_matched[cov]
         smd_before[cov] = round(_compute_smd(
-            col[treat_vals == 1], col[treat_vals == 0]), 4)
+            col[treat_mask == 1], col[treat_mask == 0]), 4)
         smd_after[cov]  = round(_compute_smd(
             col_m[df_matched["_treat_"] == 1],
             col_m[df_matched["_treat_"] == 0]), 4)
