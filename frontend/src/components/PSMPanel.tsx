@@ -20,12 +20,6 @@ import ResultExporter from "./ResultExporter";
 const fmtP = (p: number) => (p < 0.001 ? "<0.001" : p.toFixed(3));
 const smdColor = (smd: number) =>
   smd < 0.10 ? "text-emerald-600" : smd < 0.20 ? "text-amber-500" : "text-red-500";
-const smdBadge = (smd: number) =>
-  smd < 0.10
-    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-    : smd < 0.20
-    ? "bg-amber-50 text-amber-700 border-amber-200"
-    : "bg-red-50 text-red-600 border-red-200";
 
 const PLOT_BASE = {
   paper_bgcolor: "transparent",
@@ -219,7 +213,6 @@ export default function PSMPanel() {
   if (!session) return null;
 
   const allCols = session.columns.map((c) => c.name);
-  const numCols = session.columns.filter((c) => c.kind === "numeric" || c.kind === "boolean").map((c) => c.name);
 
   // Detect binary cols (0/1) from preview
   const binaryCols = useMemo(() =>
@@ -672,7 +665,7 @@ export default function PSMPanel() {
                   body: "Standardized Mean Differences are calculated before and after matching for every covariate. ALL SMDs must be < 0.10 for the match to be publication-ready (Austin, 2011)." },
                 { icon: "🏥", title: "Step 4 — Outcome Analysis", color: "emerald",
                   body: "Logistic regression, Kaplan-Meier, or Cox regression is run on the balanced matched cohort. Treatment effects estimated here are free from measured confounding." },
-              ].map(({ icon, title, color, body }) => (
+              ].map(({ icon, title, body }) => (
                 <div key={title} className="panel flex gap-3 border-t-4 border-indigo-200">
                   <span className="text-2xl flex-shrink-0">{icon}</span>
                   <div>
