@@ -1475,6 +1475,7 @@ class PowerRequest(BaseModel):
 
 @router.post("/power")
 def run_power(req: PowerRequest):
+    import traceback
     import numpy as np
     from scipy.stats import norm
     from statsmodels.stats.power import (
@@ -1485,7 +1486,11 @@ def run_power(req: PowerRequest):
     alt = "two-sided" if req.tails == 2 else "larger"
     a   = req.alpha
 
-    def _ceil(x): return int(np.ceil(float(x)))
+    def _ceil(x):
+        v = float(x)
+        if not np.isfinite(v):
+            raise HTTPException(400, "Result is infinite — the effect size may be too small or the power requirement too high.")
+        return int(np.ceil(v))
 
     def _curve(pw_fn, n_end, n_start=4, steps=80):
         pts, step = [], max(1, (n_end - n_start) // steps)
@@ -1500,8 +1505,9 @@ def run_power(req: PowerRequest):
 
     result, label, curve = None, "", []
 
-    # ── Two-sample t-test ──────────────────────────────────────────────────────
-    if req.test == "t_two":
+    try:
+        # ── Two-sample t-test ──────────────────────────────────────────────────────
+        if req.test == "t_two":
         ana = TTestIndPower()
         ratio = req.ratio or 1.0
         def pw(n): return ana.solve_power(effect_size=req.effect_size, nobs1=n, alpha=a, power=None, ratio=ratio, alternative=alt)
@@ -1636,7 +1642,12 @@ def run_power(req: PowerRequest):
             label  = f"Minimum detectable Cohen's w = {result:.4f}"
             w_es = result
             curve  = _curve(lambda n: ana.solve_power(effect_size=w_es, nobs=n, alpha=a, power=None, n_bins=n_bins), max(int(req.n)*4, 100))
-    else:
-        raise HTTPException(400, f"Unknown test: {req.test}")
+        else:
+            raise HTTPException(400, f"Unknown test: {req.test}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Power calculation error: {str(e)}")
 
     return {"result": float(result) if result is not None else None, "label": label, "curve": curve}
