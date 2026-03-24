@@ -67,13 +67,24 @@ function saveSessionCSV(session: { filename: string; columns: { name: string }[]
 
 /** Save current session preview as XLSX and trigger download */
 async function saveSessionXLSX(session: { filename: string; columns: { name: string }[]; preview: Record<string, unknown>[] }) {
-  const XLSX = (await import("xlsx")).default;
-  const headers = session.columns.map((c) => c.name);
-  const data = [headers, ...session.preview.map((row) => headers.map((h) => row[h] ?? null))];
-  const ws = XLSX.utils.aoa_to_sheet(data);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Data");
-  XLSX.writeFile(wb, session.filename.replace(/\.(csv|xlsx|sav|xls)$/i, "") + "_export.xlsx");
+  try {
+    const XLSX = (await import("xlsx")).default;
+    const headers = session.columns.map((c) => c.name);
+    const data = [headers, ...session.preview.map((row) => headers.map((h) => {
+      const v = row[h];
+      // Handle dates, numbers, and null values properly
+      if (v === null || v === undefined) return null;
+      if (v instanceof Date) return v;
+      if (typeof v === "number" || typeof v === "boolean") return v;
+      return String(v);
+    }))];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Data");
+    XLSX.writeFile(wb, session.filename.replace(/\.(csv|xlsx|sav|xls)$/i, "") + "_export.xlsx");
+  } catch (e) {
+    throw new Error(`XLSX export failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 /** Modal asking user to save before opening a new file */
@@ -141,10 +152,13 @@ export default function App() {
     try {
       if (fmt === "csv") saveSessionCSV(session);
       else await saveSessionXLSX(session);
-    } finally {
-      setSaveBusy(false);
       setShowSaveModal(false);
       clearSession();
+    } catch (e) {
+      console.error(`Error saving as ${fmt}:`, e);
+      alert(`Failed to export as ${fmt.toUpperCase()}: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSaveBusy(false);
     }
   };
 
