@@ -315,19 +315,27 @@ export default function PowerPanel() {
               <label className="text-xs font-medium text-gray-500 flex items-center gap-1">
                 Effect size ({testInfo.effectLabel}) <Tip text={effectTip[test]} wide />
               </label>
-              <input type="number" min="0.001" step="0.01"
-                className={inputCls(solveFor === "effect_size")}
-                value={effectSize} disabled={solveFor === "effect_size"}
-                onChange={(e) => setEffectSize(e.target.value)} />
-              {presets && solveFor !== "effect_size" && (
-                <div className="flex gap-1 mt-1">
-                  {(["Small", "Medium", "Large"] as const).map((s, i) => (
-                    <button key={s} onClick={() => setEffectSize(String(presets[i]))}
-                      className={chipCls(parseFloat(effectSize) === presets[i])}>
-                      {s} <span className="opacity-60 text-[9px]">({presets[i]})</span>
-                    </button>
-                  ))}
+              {solveFor === "effect_size" ? (
+                <div className={`${inputCls(true)} flex items-center justify-center text-indigo-600 font-bold`}>
+                  {result ? result.result!.toFixed(4) : "← will be calculated"}
                 </div>
+              ) : (
+                <>
+                  <input type="number" min="0.001" step="0.01"
+                    className={inputCls(false)}
+                    value={effectSize}
+                    onChange={(e) => setEffectSize(e.target.value)} />
+                  {presets && (
+                    <div className="flex gap-1 mt-1">
+                      {(["Small", "Medium", "Large"] as const).map((s, i) => (
+                        <button key={s} onClick={() => setEffectSize(String(presets[i]))}
+                          className={chipCls(parseFloat(effectSize) === presets[i])}>
+                          {s} <span className="opacity-60 text-[9px]">({presets[i]})</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -337,10 +345,16 @@ export default function PowerPanel() {
             <label className="text-xs font-medium text-gray-500 flex items-center gap-1">
               {`n${testInfo.hasRatio || testInfo.hasGroups ? " per group" : ""}`} <Tip text={TIPS.n} wide />
             </label>
-            <input type="number" min="4" step="1"
-              className={inputCls(solveFor === "n")}
-              value={n} disabled={solveFor === "n"}
-              onChange={(e) => setN(e.target.value)} />
+            {solveFor === "n" ? (
+              <div className={`${inputCls(true)} flex items-center justify-center text-indigo-600 font-bold`}>
+                {result ? Math.ceil(result.result!) : "← will be calculated"}
+              </div>
+            ) : (
+              <input type="number" min="4" step="1"
+                className={inputCls(false)}
+                value={n}
+                onChange={(e) => setN(e.target.value)} />
+            )}
           </div>
 
           {/* Power */}
@@ -348,17 +362,23 @@ export default function PowerPanel() {
             <label className="text-xs font-medium text-gray-500 flex items-center gap-1">
               Power (1−β) <Tip text={TIPS.power} wide />
             </label>
-            <input type="number" min="0.01" max="0.999" step="0.01"
-              className={inputCls(solveFor === "power")}
-              value={power} disabled={solveFor === "power"}
-              onChange={(e) => setPower(e.target.value)} />
-            {solveFor !== "power" && (
-              <div className="flex gap-1 mt-1">
-                {[["80%","0.80"],["90%","0.90"],["95%","0.95"]].map(([lbl, val]) => (
-                  <button key={val} onClick={() => setPower(val)}
-                    className={chipCls(power === val)}>{lbl}</button>
-                ))}
+            {solveFor === "power" ? (
+              <div className={`${inputCls(true)} flex items-center justify-center text-indigo-600 font-bold`}>
+                {result ? `${(result.result! * 100).toFixed(1)}%` : "← will be calculated"}
               </div>
+            ) : (
+              <>
+                <input type="number" min="0.01" max="0.999" step="0.01"
+                  className={inputCls(false)}
+                  value={power}
+                  onChange={(e) => setPower(e.target.value)} />
+                <div className="flex gap-1 mt-1">
+                  {[["80%","0.80"],["90%","0.90"],["95%","0.95"]].map(([lbl, val]) => (
+                    <button key={val} onClick={() => setPower(val)}
+                      className={chipCls(power === val)}>{lbl}</button>
+                  ))}
+                </div>
+              </>
             )}
           </div>
 
