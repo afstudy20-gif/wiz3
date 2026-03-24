@@ -124,7 +124,10 @@ async def export_dataset(
         for col in df_sav.columns:
             kind = kinds.get(col, "numeric")
 
-            if kind in ("categorical", "boolean", "text"):
+            if kind == "date":
+                variable_measure[col] = "scale"
+                # Keep as string for SPSS — dates stored as text labels
+            elif kind in ("categorical", "boolean", "text"):
                 variable_measure[col] = "nominal"
                 # Numeric columns marked as categorical → add value labels so
                 # SPSS knows the numbers map to categories

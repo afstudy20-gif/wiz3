@@ -697,17 +697,11 @@ def refresh_session(session_id: str):
     """Return updated session metadata after in-place operations (e.g. melt/compute)."""
     import json as _json
     df = _get_df(session_id)
+    from routers.upload import _detect_kind
     columns = []
     for col in df.columns:
-        dtype = str(df[col].dtype)
-        if dtype.startswith("int") or dtype.startswith("float"):
-            kind = "numeric"
-        elif dtype == "bool":
-            kind = "boolean"
-        else:
-            n_unique = df[col].nunique()
-            kind = "categorical" if n_unique <= 50 else "text"
-        columns.append({"name": col, "dtype": dtype, "kind": kind})
+        kind = _detect_kind(df[col])
+        columns.append({"name": col, "dtype": str(df[col].dtype), "kind": kind})
     preview_df = df.head(2000).replace([np.inf, -np.inf], np.nan)
     preview = _json.loads(preview_df.to_json(orient="records", default_handler=str))
     return {"rows": len(df), "columns": columns, "preview": preview}

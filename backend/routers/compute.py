@@ -34,12 +34,8 @@ def _get_df(session_id: str) -> pd.DataFrame:
 
 
 def _col_kind(series: pd.Series) -> str:
-    if pd.api.types.is_bool_dtype(series):
-        return "boolean"
-    if pd.api.types.is_numeric_dtype(series):
-        return "numeric"
-    n_unique = series.nunique()
-    return "categorical" if n_unique <= 50 else "text"
+    from routers.upload import _detect_kind
+    return _detect_kind(series)
 
 
 def _build_result(df: pd.DataFrame, col: str) -> dict:

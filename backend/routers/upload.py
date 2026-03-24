@@ -9,6 +9,40 @@ from services import store
 
 router = APIRouter()
 
+import re
+
+# Date/time patterns for auto-detection
+_DATE_PATTERNS = [
+    re.compile(r"^\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}$"),        # 01/02/2024, 1-2-24
+    re.compile(r"^\d{4}[/\-.]\d{1,2}[/\-.]\d{1,2}$"),           # 2024-01-02
+    re.compile(r"^\d{1,2}:\d{2}(:\d{2})?$"),                     # 01:29:00, 1:29
+    re.compile(r"^\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}\s+\d{1,2}:\d{2}"),  # 01/02/2024 13:45
+    re.compile(r"^\d{4}[/\-.]\d{1,2}[/\-.]\d{1,2}[T ]\d{1,2}:\d{2}"),   # 2024-01-02T13:45
+]
+
+def _detect_kind(series: pd.Series) -> str:
+    """Detect column kind with date/time support."""
+    dtype = str(series.dtype)
+
+    # Already a datetime dtype (pandas parsed it)
+    if "datetime" in dtype or "timedelta" in dtype:
+        return "date"
+
+    if dtype.startswith("int") or dtype.startswith("float"):
+        return "numeric"
+    if dtype == "bool":
+        return "boolean"
+
+    # For object/string columns: check if values look like dates/times
+    sample = series.dropna().head(50).astype(str)
+    if len(sample) > 0:
+        matches = sum(1 for v in sample if any(p.match(v.strip()) for p in _DATE_PATTERNS))
+        if matches / len(sample) >= 0.7:  # ≥70% match → date
+            return "date"
+
+    n_unique = series.nunique()
+    return "categorical" if n_unique <= 50 else "text"
+
 SUPPORTED = {
     "csv": "text/csv",
     "xlsx": "excel",
@@ -59,15 +93,8 @@ async def upload_file(file: UploadFile = File(...)):
 
     columns = []
     for col in df.columns:
-        dtype = str(df[col].dtype)
-        if dtype.startswith("int") or dtype.startswith("float"):
-            kind = "numeric"
-        elif dtype == "bool":
-            kind = "boolean"
-        else:
-            n_unique = df[col].nunique()
-            kind = "categorical" if n_unique <= 50 else "text"
-        columns.append({"name": col, "dtype": dtype, "kind": kind})
+        kind = _detect_kind(df[col])
+        columns.append({"name": col, "dtype": str(df[col].dtype), "kind": kind})
 
     # Use pandas to_json → loads to guarantee NaN/Inf become null
     import numpy as np, json as _json
