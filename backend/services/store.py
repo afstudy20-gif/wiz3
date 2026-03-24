@@ -1,19 +1,59 @@
-"""In-memory dataframe store keyed by session id."""
+"""In-memory dataframe store keyed by session id with automatic cleanup."""
 import pandas as pd
 from typing import Dict, List, Optional
+import time
+from threading import Lock
 
-_store: Dict[str, pd.DataFrame] = {}
-
-# Case filter conditions: [{column, operator, value, join}]
+_store: Dict[str, dict] = {}  # {session_id: {"df": DataFrame, "timestamp": float}}
 _filters: Dict[str, List[dict]] = {}
+_lock = Lock()
+
+# Session configuration
+SESSION_TTL_SECONDS = 3600  # 1 hour
+MAX_SESSIONS = 50  # Limit concurrent sessions
+_last_cleanup = time.time()
+
+
+def _cleanup_old_sessions() -> None:
+    """Remove sessions older than TTL, keeping only the most recent MAX_SESSIONS."""
+    global _last_cleanup
+    now = time.time()
+    if now - _last_cleanup < 60:  # Cleanup every 60 seconds max
+        return
+
+    _last_cleanup = now
+    with _lock:
+        # Remove expired sessions
+        expired = [sid for sid, entry in _store.items() if now - entry["timestamp"] > SESSION_TTL_SECONDS]
+        for sid in expired:
+            _store.pop(sid, None)
+            _filters.pop(sid, None)
+
+        # If still over limit, remove oldest sessions
+        if len(_store) > MAX_SESSIONS:
+            sorted_sids = sorted(_store.items(), key=lambda x: x[1]["timestamp"])
+            to_remove = len(_store) - MAX_SESSIONS
+            for sid, _ in sorted_sids[:to_remove]:
+                _store.pop(sid, None)
+                _filters.pop(sid, None)
 
 
 def save(session_id: str, df: pd.DataFrame) -> None:
-    _store[session_id] = df
+    """Save dataframe with timestamp for TTL tracking."""
+    _cleanup_old_sessions()
+    with _lock:
+        _store[session_id] = {"df": df, "timestamp": time.time()}
 
 
 def get(session_id: str) -> Optional[pd.DataFrame]:
-    return _store.get(session_id)
+    """Get dataframe and update access timestamp."""
+    with _lock:
+        entry = _store.get(session_id)
+        if entry is None:
+            return None
+        # Update timestamp on access to keep active sessions alive
+        entry["timestamp"] = time.time()
+        return entry["df"]
 
 
 def save_filter(session_id: str, conditions: List[dict]) -> None:
@@ -74,10 +114,14 @@ def _apply_conditions(df: pd.DataFrame, conditions: List[dict]) -> pd.DataFrame:
 
 def get_filtered(session_id: str) -> Optional[pd.DataFrame]:
     """Return the session dataframe with any active case filter applied."""
-    df = _store.get(session_id)
-    if df is None:
-        return None
-    conditions = _filters.get(session_id, [])
+    with _lock:
+        entry = _store.get(session_id)
+        if entry is None:
+            return None
+        df = entry["df"]
+        # Update access timestamp
+        entry["timestamp"] = time.time()
+        conditions = _filters.get(session_id, [])
     return _apply_conditions(df, conditions)
 
 
