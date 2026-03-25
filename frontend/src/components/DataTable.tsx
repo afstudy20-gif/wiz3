@@ -354,6 +354,7 @@ export default function DataTable() {
   const session          = useStore((s) => s.session);
   const updateColumnKind = useStore((s) => s.updateColumnKind);
   const updatePreviewCell = useStore((s) => s.updatePreviewCell);
+  const reorderColumns   = useStore((s) => s.reorderColumns);
   const caseFilter       = useStore((s) => s.caseFilter);
   const setCaseFilter    = useStore((s) => s.setCaseFilter);
 
@@ -367,6 +368,10 @@ export default function DataTable() {
   const [showSaveMenu,   setShowSaveMenu]  = useState(false);
   const [showMissingOnly, setShowMissingOnly] = useState(false);
   const [showSelectCases, setShowSelectCases] = useState(false);
+
+  // Drag & drop column reordering
+  const [dragIdx,  setDragIdx]  = useState<number | null>(null);
+  const [dropIdx,  setDropIdx]  = useState<number | null>(null);
 
   const inputRef   = useRef<HTMLInputElement>(null);
   const saveMenuRef = useRef<HTMLDivElement>(null);
@@ -674,13 +679,39 @@ export default function DataTable() {
               <th className="px-3 py-2 text-left text-gray-400 text-xs font-normal w-10 border-r border-gray-200 select-none">
                 #
               </th>
-              {columns.map((col) => {
+              {columns.map((col, colIdx) => {
                 const isSorted = sortCol === col.name;
                 const nMissing = missingCounts[col.name] ?? 0;
+                const isDragOver = dropIdx === colIdx && dragIdx !== colIdx;
                 return (
-                  <th key={col.name} className="px-2 py-2 border-r border-gray-200 min-w-[130px] max-w-[200px]">
+                  <th
+                    key={col.name}
+                    draggable
+                    onDragStart={(e) => {
+                      setDragIdx(colIdx);
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData("text/plain", String(colIdx));
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                      setDropIdx(colIdx);
+                    }}
+                    onDragLeave={() => { if (dropIdx === colIdx) setDropIdx(null); }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      if (dragIdx !== null && dragIdx !== colIdx) reorderColumns(dragIdx, colIdx);
+                      setDragIdx(null);
+                      setDropIdx(null);
+                    }}
+                    onDragEnd={() => { setDragIdx(null); setDropIdx(null); }}
+                    className={`px-2 py-2 border-r border-gray-200 min-w-[130px] max-w-[200px] cursor-grab active:cursor-grabbing select-none
+                      ${dragIdx === colIdx ? "opacity-40" : ""}
+                      ${isDragOver ? "border-l-2 border-l-indigo-500" : ""}`}
+                  >
                     <div className="flex items-center gap-1 justify-between">
                       <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="text-gray-300 text-[8px] flex-shrink-0 cursor-grab" title="Drag to reorder">⠿</span>
                         <button
                           onClick={() => cycleKind(col.name)}
                           title={`Type: ${col.kind} — click to change`}

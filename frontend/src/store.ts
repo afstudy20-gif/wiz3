@@ -79,6 +79,8 @@ interface AppState {
   // Computed columns (Compute tab)
   addSessionColumn: (col: ColMeta, previewValues: (number | string | null)[]) => void;
   removeSessionColumn: (name: string) => void;
+  // Column reordering (drag & drop)
+  reorderColumns: (fromIndex: number, toIndex: number) => void;
   // Table 1 persistence across tab switches
   table1Result: any;
   setTable1Result: (r: any) => void;
@@ -154,6 +156,14 @@ export const useStore = create<AppState>((set) => ({
         return r;
       });
       return { session: { ...state.session, columns, preview } };
+    }),
+  reorderColumns: (fromIndex, toIndex) =>
+    set((state) => {
+      if (!state.session || fromIndex === toIndex) return state;
+      const cols = [...state.session.columns];
+      const [moved] = cols.splice(fromIndex, 1);
+      cols.splice(toIndex, 0, moved);
+      return { session: { ...state.session, columns: cols } };
     }),
   setTable1Result: (r) => set({ table1Result: r }),
   clearTable1: () => set({ table1Result: null }),
