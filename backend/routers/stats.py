@@ -703,7 +703,7 @@ def refresh_session(session_id: str):
         kind = _detect_kind(df[col])
         columns.append({"name": col, "dtype": str(df[col].dtype), "kind": kind})
     preview_df = df.head(2000).replace([np.inf, -np.inf], np.nan)
-    preview = _json.loads(preview_df.to_json(orient="records", default_handler=str))
+    preview = _json.loads(preview_df.to_json(orient="records", default_handler=str, date_format="iso", date_unit="s"))
     return {"rows": len(df), "columns": columns, "preview": preview}
 
 

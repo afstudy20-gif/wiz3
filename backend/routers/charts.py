@@ -103,7 +103,7 @@ def scatter(req: ChartRequest):
         }
 
     # Serialize points safely (NaN → null via json round-trip)
-    points = _json.loads(sub.to_json(orient="records", default_handler=str))
+    points = _json.loads(sub.to_json(orient="records", default_handler=str, date_format="iso", date_unit="s"))
 
     return {
         "type": "scatter",
