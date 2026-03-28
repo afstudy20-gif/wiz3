@@ -1,13 +1,15 @@
 import { useCallback, useState } from "react";
-import { Upload } from "lucide-react";
+import { Upload, Info } from "lucide-react";
 import { uploadFile } from "../api";
 import { useStore } from "../store";
+import AboutModal from "./AboutModal";
 
 export default function UploadZone() {
   const setSession = useStore((s) => s.setSession);
   const [dragging, setDragging] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showAbout, setShowAbout] = useState(false);
 
   const handle = useCallback(async (file: File) => {
     setLoading(true);
@@ -37,6 +39,7 @@ export default function UploadZone() {
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen gap-8 p-8 bg-gray-50">
+      {showAbout && <AboutModal onClose={() => setShowAbout(false)} />}
       <div className="flex flex-col items-center gap-3">
         <img src="/logo.png" alt="uSTAT logo" className="w-32 h-32 object-contain drop-shadow-md" />
         <div className="text-center">
@@ -71,9 +74,13 @@ export default function UploadZone() {
       {loading && <p className="text-indigo-600 animate-pulse">Uploading and parsing…</p>}
       {error && <p className="text-red-500 text-sm">{error}</p>}
 
-      <p className="text-gray-400 text-xs text-center max-w-sm">
-        Data stays on your local machine — everything runs through your own backend.
-      </p>
+      <button
+        onClick={() => setShowAbout(true)}
+        className="flex items-center gap-1.5 text-gray-400 hover:text-indigo-600 text-xs transition-colors"
+      >
+        <Info size={14} />
+        About uSTAT — packages & methods
+      </button>
     </div>
   );
 }
