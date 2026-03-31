@@ -426,8 +426,12 @@ def check_normality(x: np.ndarray, label: str = "Sample") -> dict:
     n = len(x)
     if n < 3:
         return {"name": f"Normality ({label})", "met": True, "detail": "Too few obs to test"}
+    if np.std(x) == 0:
+        return {"name": f"Normality ({label})", "met": True, "detail": "Constant values (no variation)"}
     if n <= 2000:
         stat, p = sp.shapiro(x[:5000])
+        if np.isnan(p):
+            return {"name": f"Normality ({label})", "met": True, "detail": "Test inconclusive"}
         test_name = "Shapiro-Wilk"
     else:
         skew = float(sp.skew(x))
@@ -467,3 +471,35 @@ def group_summary(x: np.ndarray, label: str = "Sample") -> dict:
         "min": round(float(x.min()), 4),
         "max": round(float(x.max()), 4),
     }
+
+
+def cohen_d_paired(d: np.ndarray) -> dict:
+    """Cohen's d_z for paired differences with 95% CI."""
+    n = len(d)
+    sd = float(d.std(ddof=1))
+    if sd == 0 or np.isnan(sd):
+        return {"name": "cohen_d_z", "value": 0.0, "ci_low": 0.0, "ci_high": 0.0, "magnitude": "negligible"}
+    dz = float(d.mean()) / sd
+    se = np.sqrt(1/n + dz**2 / (2*n))
+    ci_lo = dz - 1.96 * se
+    ci_hi = dz + 1.96 * se
+    return {"name": "cohen_d_z", "value": round(dz, 4), "ci_low": round(ci_lo, 4),
+            "ci_high": round(ci_hi, 4), "magnitude": _es_magnitude("cohen_d", dz)}
+
+
+def kendalls_w(chi2: float, n: int, k: int) -> dict:
+    """Kendall's W concordance coefficient for Friedman test."""
+    w = chi2 / (n * (k - 1)) if n > 0 and k > 1 else 0.0
+    return {"name": "kendalls_w", "value": round(w, 4), "ci_low": None, "ci_high": None,
+            "magnitude": _es_magnitude("eta_squared", w)}
+
+
+def matched_rank_biserial(w_stat: float, n: int) -> dict:
+    """Matched-pairs rank-biserial r from Wilcoxon signed-rank W."""
+    max_w = n * (n + 1) / 2
+    r = 2 * w_stat / max_w - 1 if max_w > 0 else 0.0
+    se = np.sqrt((2 * n + 1) / (6 * n)) if n > 0 else 0
+    ci_lo = max(-1, r - 1.96 * se)
+    ci_hi = min(1, r + 1.96 * se)
+    return {"name": "rank_biserial_r", "value": round(r, 4), "ci_low": round(ci_lo, 4),
+            "ci_high": round(ci_hi, 4), "magnitude": _es_magnitude("rank_biserial_r", r)}

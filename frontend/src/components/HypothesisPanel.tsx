@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useStore } from "../store";
-import { runTTest, runChiSquare, runAnova, runMannWhitney, runFisher, runKruskal } from "../api";
+import { runTTest, runChiSquare, runAnova, runMannWhitney, runFisher, runKruskal, runAncova, runTwoWayAnova } from "../api";
 import ResultExporter from "./ResultExporter";
 
 const TESTS = [
@@ -9,6 +9,8 @@ const TESTS = [
   { id: "anova",          label: "One-way ANOVA",         group: "Parametric" },
   { id: "mannwhitney",    label: "Mann-Whitney U",        group: "Non-parametric" },
   { id: "kruskal",        label: "Kruskal-Wallis",        group: "Non-parametric" },
+  { id: "ancova",          label: "ANCOVA",                group: "Parametric" },
+  { id: "two_way",        label: "Two-way ANOVA",         group: "Parametric" },
   { id: "chisquare",      label: "Chi-square",            group: "Categorical" },
   { id: "fisher",         label: "Fisher's exact",        group: "Categorical" },
 ];
@@ -48,6 +50,16 @@ const TEST_GUIDANCE: Record<string, { when: string; assumptions: string; reading
     when: "Exact test for 2\u00D72 tables, especially when sample is small or any expected cell count < 5. Preferred over chi-square for small samples.",
     assumptions: "Fixed marginals. No minimum sample size requirement — valid even for very small tables.",
     reading: "p < 0.05 means the row and column variables are significantly associated. Also report the odds ratio and its 95% CI.",
+  },
+  ancova: {
+    when: "Compare group means on an outcome after controlling for one or more continuous covariates. Essential when groups differ on a baseline variable (e.g. age, BMI).",
+    assumptions: "Normality of residuals. Homogeneity of regression slopes (covariate effect is the same in all groups). Linear relationship between covariate and outcome.",
+    reading: "The F-test for the group factor shows whether groups differ AFTER adjustment. EMMs (estimated marginal means) show the adjusted group means. Report: F, p, partial \u03B7\u00B2, and EMMs.",
+  },
+  two_way: {
+    when: "Examine the effects of two categorical factors (and their interaction) on a continuous outcome. E.g. drug type \u00D7 dose level on blood pressure.",
+    assumptions: "Normality of residuals. Homogeneity of variances across all factor-level combinations.",
+    reading: "Check the interaction first. If significant, main effects are qualified by the interaction. Report F, p, and partial \u03B7\u00B2 for each term. Use EMMs to understand cell means.",
   },
 };
 
@@ -231,13 +243,17 @@ export default function HypothesisPanel() {
   const [col2, setCol2] = useState(catCols[1] ?? catCols[0] ?? "");
   const [groupCol, setGroupCol] = useState(catCols[0] ?? "");
   const [mu, setMu] = useState("0");
+  const [covariates, setCovariates] = useState<string[]>([]);
+  const [factor2, setFactor2] = useState(catCols[1] ?? catCols[0] ?? "");
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const isCat = test === "chisquare" || test === "fisher";
-  const needsGroup = ["ttest_2sample", "anova", "mannwhitney", "kruskal"].includes(test);
+  const needsGroup = ["ttest_2sample", "anova", "mannwhitney", "kruskal", "ancova"].includes(test);
   const needsSecondCat = isCat;
+  const isAncova = test === "ancova";
+  const isTwoWay = test === "two_way";
 
   const run = async () => {
     setLoading(true); setError(null); setResult(null);
@@ -251,6 +267,8 @@ export default function HypothesisPanel() {
       else if (test === "kruskal")   res = await runKruskal({ session_id: sid, column: col, group_column: groupCol });
       else if (test === "chisquare") res = await runChiSquare({ session_id: sid, row_column: col, col_column: col2 });
       else if (test === "fisher")    res = await runFisher({ session_id: sid, row_column: col, col_column: col2 });
+      else if (test === "ancova")    res = await runAncova({ session_id: sid, outcome: col, group_col: groupCol, covariates });
+      else if (test === "two_way")   res = await runTwoWayAnova({ session_id: sid, outcome: col, factor1: groupCol, factor2 });
       setResult(res?.data);
     } catch (e: any) {
       setError(e.response?.data?.detail ?? "Error");
@@ -325,7 +343,29 @@ export default function HypothesisPanel() {
             </div>
           )}
 
-          <button className="btn-primary w-full" onClick={run} disabled={loading}>
+          {/* ANCOVA: covariates multi-select */}
+          {isAncova && (
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">Covariates (continuous)</label>
+              <select multiple className="select w-full h-24" value={covariates}
+                onChange={(e) => setCovariates(Array.from(e.target.selectedOptions, o => o.value))}>
+                {numCols.filter(c => c !== col).map((c) => <option key={c}>{c}</option>)}
+              </select>
+              <p className="text-[10px] text-gray-400 mt-1">Hold Ctrl/Cmd to select multiple</p>
+            </div>
+          )}
+
+          {/* Two-way ANOVA: factor 2 */}
+          {isTwoWay && (
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">Factor 2</label>
+              <select className="select w-full" value={factor2} onChange={(e) => setFactor2(e.target.value)}>
+                {catCols.filter(c => c !== groupCol).map((c) => <option key={c}>{c}</option>)}
+              </select>
+            </div>
+          )}
+
+          <button className="btn-primary w-full" onClick={run} disabled={loading || (isAncova && covariates.length === 0)}>
             {loading ? "Running…" : "Run Test"}
           </button>
           {error && <p className="text-red-500 text-xs">{error}</p>}

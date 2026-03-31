@@ -73,6 +73,17 @@ export const runICC = (data: object) => api.post("/api/stats/icc", data);
 export const runCohensKappa = (data: object) => api.post("/api/stats/cohens_kappa", data);
 export const runPower       = (data: object) => api.post("/api/stats/power", data);
 
+// Repeated measures
+export const runPairedTTest  = (data: object) => api.post("/api/repeated/paired_ttest", data);
+export const runWilcoxonSR   = (data: object) => api.post("/api/repeated/wilcoxon_signed_rank", data);
+export const runFriedman     = (data: object) => api.post("/api/repeated/friedman", data);
+export const runRMAnova      = (data: object) => api.post("/api/repeated/rm_anova", data);
+export const runMixedAnova   = (data: object) => api.post("/api/repeated/mixed_anova", data);
+
+// Advanced ANOVA
+export const runAncova       = (data: object) => api.post("/api/advanced_anova/ancova", data);
+export const runTwoWayAnova  = (data: object) => api.post("/api/advanced_anova/two_way_anova", data);
+
 export const selectCases = (sessionId: string, conditions: object[]) =>
   api.post(`/api/sessions/${sessionId}/select_cases`, { conditions });
 export const clearCases  = (sessionId: string) =>
