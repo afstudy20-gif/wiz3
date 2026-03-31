@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
 import Plot from "../PlotComponent";
-import { useStore } from "../store";
+import { useStore, PALETTES } from "../store";
 import ResultExporter from "./ResultExporter";
+
+const _pal = () => PALETTES[useStore.getState().plotTheme.palette] ?? PALETTES.indigo;
 import {
   runCorrelationPair,
   runCorrelationMatrix,
@@ -379,7 +381,7 @@ function PairwiseTab({ sessionId, columns }: { sessionId: string; columns: strin
                       mode: "markers",
                       x: active.scatter.x,
                       y: active.scatter.y,
-                      marker: { color: "#6366f1", opacity: 0.65, size: 6 },
+                      marker: { color: _pal()[0], opacity: 0.65, size: 6 },
                       name: "Data",
                       hovertemplate: `${active.var1}: %{x:.3f}<br>${active.var2}: %{y:.3f}<extra></extra>`,
                     },
@@ -523,7 +525,7 @@ function MatrixTab({ sessionId, columns }: { sessionId: string; columns: string[
         <p className="text-[10px] text-gray-400">n = {vals.length}</p>
         <Plot
           data={[{ type: "bar" as const, x: xs, y: counts,
-            marker: { color: "#6366f1", opacity: 0.8 },
+            marker: { color: _pal()[0], opacity: 0.8 },
             hovertemplate: "%{x:.2f}: %{y}<extra></extra>" }]}
           layout={{
             paper_bgcolor: "transparent", plot_bgcolor: "#f9fafb",
@@ -738,7 +740,7 @@ function MatrixTab({ sessionId, columns }: { sessionId: string; columns: string[
                           values: rawData[col],
                         })),
                         marker: {
-                          color: "#6366f1",
+                          color: _pal()[0],
                           size: 3,
                           opacity: 0.45,
                           line: { color: "#a5b4fc", width: 0.5 },
@@ -885,7 +887,7 @@ function ICCTab({ sessionId, columns }: { sessionId: string; columns: string[] }
             data={[{
               type: "scatter", mode: "markers",
               x: data.bland_altman.means, y: data.bland_altman.diffs,
-              marker: { color: "#6366f1", opacity: 0.7, size: 6 },
+              marker: { color: _pal()[0], opacity: 0.7, size: 6 },
               name: "Subjects",
               hovertemplate: "Mean: %{x:.3f}<br>Diff: %{y:.3f}<extra></extra>",
             }]}
@@ -1022,7 +1024,7 @@ function KappaTab({ sessionId, columns }: { sessionId: string; columns: string[]
               z: data.confusion_matrix,
               x: data.labels.map((l: string) => `Rater2: ${l}`),
               y: data.labels.map((l: string) => `Rater1: ${l}`),
-              colorscale: [[0, "#f9fafb"], [1, "#6366f1"]],
+              colorscale: [[0, "#f9fafb"], [1, _pal()[0]]],
               showscale: false,
               text: data.confusion_matrix.map((row: number[]) => row.map((v: number) => String(v))),
               texttemplate: "%{text}",

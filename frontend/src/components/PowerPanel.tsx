@@ -1,8 +1,10 @@
 import { useState } from "react";
 import Plot from "../PlotComponent";
 import { runPower } from "../api";
-import { useStore } from "../store";
+import { useStore, PALETTES } from "../store";
 import { Tip } from "./Tip";
+
+const _pal = () => PALETTES[useStore.getState().plotTheme.palette] ?? PALETTES.indigo;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -189,7 +191,7 @@ export default function PowerPanel() {
       type: "scatter", mode: "lines",
       x: result.curve.map((p) => p.n),
       y: result.curve.map((p) => p.power),
-      line: { color: "#6366f1", width: 2.5 }, name: "Power",
+      line: { color: _pal()[0], width: 2.5 }, name: "Power",
       hovertemplate: "n = %{x}<br>Power = %{y:.3f}<extra></extra>",
     },
     {
@@ -205,7 +207,7 @@ export default function PowerPanel() {
     if (pt) plotTraces.push({
       type: "scatter", mode: "markers",
       x: [pt.n], y: [pt.power],
-      marker: { color: "#6366f1", size: 10, line: { color: "#fff", width: 2 } },
+      marker: { color: _pal()[0], size: 10, line: { color: "#fff", width: 2 } },
       name: `n = ${pt.n}`,
       hovertemplate: `n = ${pt.n}<br>Power = ${pt.power.toFixed(3)}<extra></extra>`,
     });
@@ -573,7 +575,7 @@ export default function PowerPanel() {
                   shapes: currentN ? [{
                     type: "line", xref: "x", yref: "y",
                     x0: currentN, x1: currentN, y0: 0, y1: 1,
-                    line: { color: "#6366f1", width: 1.5, dash: "dot" },
+                    line: { color: _pal()[0], width: 1.5, dash: "dot" },
                   }] : [],
                 } as any}
                 style={{ width: "100%", height: 320 }}

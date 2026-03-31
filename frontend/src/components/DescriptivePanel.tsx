@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useStore } from "../store";
+import { useStore, PALETTES } from "../store";
+import { usePalette } from "../plotStyle";
 import api from "../api";
 import Plot from "../PlotComponent";
 import ResultExporter from "./ResultExporter";
@@ -11,6 +12,7 @@ interface SparkData { type: string; data: number[]; }
 function Sparkline({ spark }: { spark: SparkData }) {
   const W = 40, H = 12;
   const { type, data } = spark;
+  const pal = usePalette();
   if (!data || data.length === 0) return null;
   const max = Math.max(...data);
   if (max === 0) return null;
@@ -24,7 +26,7 @@ function Sparkline({ spark }: { spark: SparkData }) {
           return (
             <rect key={i} x={i * bw} y={H - bh}
               width={Math.max(bw - 0.5, 0.5)} height={bh}
-              fill="#6366f1" opacity={0.7} rx={0.5} />
+              fill={pal[0]} opacity={0.7} rx={0.5} />
           );
         })}
       </svg>
@@ -33,7 +35,7 @@ function Sparkline({ spark }: { spark: SparkData }) {
 
   // categorical → proportional horizontal bars
   const total = data.reduce((a, b) => a + b, 0);
-  const CATS = ["#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6"];
+  const CATS = pal;
   let cx = 0;
   return (
     <svg width={W} height={H} style={{ display: "block", flexShrink: 0 }}>
@@ -48,6 +50,7 @@ function Sparkline({ spark }: { spark: SparkData }) {
   );
 }
 
+// BASE_LAYOUT kept as fallback — most charts now use usePlotLayout() instead
 const BASE_LAYOUT = {
   paper_bgcolor: "transparent",
   plot_bgcolor: "#f9fafb",
@@ -70,13 +73,15 @@ type ChartTab = typeof CHART_TABS[number]["id"];
 function NumericView({ summary }: { summary: any }) {
   const [chartTab, setChartTab] = useState<ChartTab>("histogram");
   const showGrid = useStore((s) => s.showGrid);
+  const pal = usePalette();
+  const P = pal[0]; // primary color
 
   const histData = [{
     type: "bar" as const,
     x: summary.histogram.map((b: any) => (b.bin_start + b.bin_end) / 2),
     y: summary.histogram.map((b: any) => b.count),
     width: summary.histogram.map((b: any) => b.bin_end - b.bin_start),
-    marker: { color: "#6366f1", opacity: 0.85 },
+    marker: { color: P, opacity: 0.85 },
     name: "Count",
     hovertemplate: "Range: %{customdata[0]}–%{customdata[1]}<br>Count: %{y}<extra></extra>",
     customdata: summary.histogram.map((b: any) => [b.bin_start.toFixed(2), b.bin_end.toFixed(2)]),
@@ -93,8 +98,8 @@ function NumericView({ summary }: { summary: any }) {
     sd: [summary.std],
     name: "Distribution",
     boxmean: true,
-    marker: { color: "#6366f1", size: 5 },
-    line: { color: "#6366f1" },
+    marker: { color: P, size: 5 },
+    line: { color: P },
     fillcolor: "rgba(99,102,241,0.15)",
     hovertemplate:
       `Median: ${summary.median?.toFixed(2)}<br>` +
@@ -108,7 +113,7 @@ function NumericView({ summary }: { summary: any }) {
       type: "scatter" as const, mode: "markers" as const,
       x: summary.qq.map((p: any) => p.x),
       y: summary.qq.map((p: any) => p.y),
-      marker: { color: "#6366f1", size: 4 },
+      marker: { color: P, size: 4 },
       name: "Observed",
     },
     (() => {
@@ -192,12 +197,12 @@ function NumericView({ summary }: { summary: any }) {
             name: "Distribution",
             box: { visible: true },
             meanline: { visible: true },
-            line: { color: "#6366f1" },
-            fillcolor: "rgba(99,102,241,0.15)",
+            line: { color: P },
+            fillcolor: P + "25",
             points: (summary.raw_values?.length ?? 0) < 200 ? "all" : false,
             jitter: 0.3,
             pointpos: -1.5,
-            marker: { color: "#818cf8", size: 3, opacity: 0.5 },
+            marker: { color: P, size: 3, opacity: 0.5 },
             hovertemplate:
               `Median: ${summary.median?.toFixed(2)}<br>` +
               `Mean: ${summary.mean?.toFixed(2)}<br>` +
@@ -266,7 +271,7 @@ function CategoricalView({ summary }: { summary: any }) {
     x: cats.map((c: any) => c.count),
     y: cats.map((c: any) => c.value),
     orientation: "h" as const,
-    marker: { color: "#6366f1", opacity: 0.85 },
+    marker: { color: PALETTES[useStore.getState().plotTheme.palette]?.[0] ?? "#6366f1", opacity: 0.85 },
     text: cats.map((c: any) => `${c.count}`),
     textposition: "outside" as const,
     hovertemplate: "%{y}: %{x}<extra></extra>",
@@ -301,7 +306,8 @@ function CategoricalView({ summary }: { summary: any }) {
 
 // ── Scatter view ─────────────────────────────────────────────────────────────
 
-const PALETTE  = ["#6366f1","#f59e0b","#10b981","#ef4444","#06b6d4","#ec4899","#a78bfa","#fb923c"];
+// Use global palette — falls back to default if not set
+const _getPalette = () => PALETTES[useStore.getState().plotTheme.palette] ?? PALETTES.indigo;
 const SYMBOLS  = ["circle","square","diamond","triangle-up","cross","star","hexagram","pentagon"] as const;
 
 function ScatterView({
@@ -367,7 +373,7 @@ function ScatterView({
           x: vals.x, y: vals.y,
           name: g,
           marker: {
-            color: PALETTE[i % PALETTE.length],
+            color: _getPalette()[i % _getPalette().length],
             size: 7, opacity: 0.78,
             symbol: shape ? vals.shapeLabels.map(symbolOf) : "circle",
           },
@@ -391,7 +397,7 @@ function ScatterView({
           type: "scatter", mode: "markers",
           x: vals.x, y: vals.y,
           name: g,
-          marker: { color: "#6366f1", size: 7, opacity: 0.78, symbol: SYMBOLS[i % SYMBOLS.length] },
+          marker: { color: _getPalette()[0], size: 7, opacity: 0.78, symbol: SYMBOLS[i % SYMBOLS.length] },
           hovertemplate: `<b>${shape}</b>: ${g}<br>${xCol}: %{x}<br>${yCol}: %{y}<extra></extra>`,
         });
       });
@@ -401,7 +407,7 @@ function ScatterView({
         x: pts.map((p) => p[xCol]),
         y: pts.map((p) => p[yCol]),
         name: "Data",
-        marker: { color: "#6366f1", size: 6, opacity: 0.7, symbol: "circle" },
+        marker: { color: _getPalette()[0], size: 6, opacity: 0.7, symbol: "circle" },
         hovertemplate: `${xCol}: %{x}<br>${yCol}: %{y}<extra></extra>`,
       });
     }

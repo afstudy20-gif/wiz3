@@ -1,9 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import Plot from "../PlotComponent";
-import { useStore } from "../store";
+import { useStore, PALETTES } from "../store";
 import { runROC, runROCCompare, runROCCombined } from "../api";
 import { Tip, InfoBanner } from "./Tip";
 import { MissingGuard, type ImputationStrategy } from "./MissingGuard";
+
+// ── Helper to get current palette primary color ────────────────────────────
+const _pal = () => PALETTES[useStore.getState().plotTheme.palette] ?? PALETTES.indigo;
+const _p0 = () => _pal()[0];
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -159,11 +163,11 @@ export default function ROCPanel() {
   const [cmpError,    setCmpError]    = useState<string | null>(null);
   const [cmpLoading,  setCmpLoading]  = useState(false);
 
-  const [singleStyle, setSingleStyle] = useState<CurveStyle>({ color: "#6366f1", width: 2.5, dash: "solid" });
+  const [singleStyle, setSingleStyle] = useState<CurveStyle>({ color: _p0(), width: 2.5, dash: "solid" });
   const [chanceStyle, setChanceStyle] = useState<CurveStyle>({ color: "#9ca3af", width: 1,   dash: "dash"  });
 
   useEffect(() => {
-    if (result) { setSingleStyle({ color: "#6366f1", width: 2.5, dash: "solid" }); }
+    if (result) { setSingleStyle({ color: _p0(), width: 2.5, dash: "solid" }); }
   }, [result?.auc, result?.n]);
 
   // ── Multi-curve state ──

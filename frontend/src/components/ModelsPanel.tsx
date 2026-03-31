@@ -6,6 +6,9 @@ import { Tip, InfoBanner } from "./Tip";
 import ResultExporter from "./ResultExporter";
 import PlotExporter from "./PlotExporter";
 import { MissingGuard, type ImputationStrategy } from "./MissingGuard";
+import { PALETTES } from "../store";
+
+const _pal = () => PALETTES[useStore.getState().plotTheme.palette] ?? PALETTES.indigo;
 
 const PLOT_LAYOUT = {
   paper_bgcolor: "transparent",
@@ -82,7 +85,7 @@ function SparklineMini({ data, type }: { data: number[]; type: string }) {
   }
   // categorical → stacked horizontal proportion bars
   const total = data.reduce((a, b) => a + b, 0);
-  const CATS  = ["#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6"];
+  const CATS  = _pal();
   let cx = 0;
   return (
     <svg width={W} height={H} style={{ display: "block", flexShrink: 0 }}>
@@ -1107,7 +1110,7 @@ export default function ModelsPanel() {
   const [predFilter, setPredFilter] = useState("");
 
   // ── KM curve styling ────────────────────────────────────────────────────────
-  const KM_PALETTE = ["#6366f1","#f59e0b","#10b981","#ef4444","#8b5cf6","#06b6d4"];
+  const KM_PALETTE = _pal();
   const KM_DASHES  = ["solid","dash","dot","dashdot"] as const;
 
   interface KmStyle { color: string; width: number; dash: string; }

@@ -1,20 +1,14 @@
 import { useState } from "react";
 import Plot from "../PlotComponent";
 import { useStore } from "../store";
+import { usePlotLayout, usePalette, useTraceDefaults } from "../plotStyle";
 import { getHistogram, getScatter, getBoxplot, getBar } from "../api";
-
-const PLOT_LAYOUT: Record<string, unknown> = {
-  paper_bgcolor: "transparent",
-  plot_bgcolor: "#ffffff",
-  font: { color: "#374151", size: 12 },
-  margin: { t: 30, r: 20, b: 50, l: 60 },
-  xaxis: { gridcolor: "#e5e7eb", zerolinecolor: "#d1d5db" },
-  yaxis: { gridcolor: "#e5e7eb", zerolinecolor: "#d1d5db" },
-};
 
 export default function ChartsPanel() {
   const session  = useStore((s) => s.session);
-  const showGrid = useStore((s) => s.showGrid);
+  const layout   = usePlotLayout();
+  const pal      = usePalette();
+  const td       = useTraceDefaults();
   if (!session) return null;
 
   const numCols = session.columns.filter((c) => c.kind === "numeric").map((c) => c.name);
@@ -47,7 +41,7 @@ export default function ChartsPanel() {
     }
   };
 
-  const traces = buildTraces(plotData, chartType);
+  const traces = plotData ? buildTraces(plotData, chartType, pal, td) : null;
 
   return (
     <div className="flex gap-4 h-full">
@@ -110,7 +104,7 @@ export default function ChartsPanel() {
         {traces ? (
           <Plot
             data={traces}
-            layout={{ ...PLOT_LAYOUT, xaxis: { ...(PLOT_LAYOUT.xaxis as object), showgrid: showGrid }, yaxis: { ...(PLOT_LAYOUT.yaxis as object), showgrid: showGrid }, title: { text: plotData?.x ?? "", font: { color: "#374151" } }, autosize: true }}
+            layout={{ ...layout, title: { text: plotData?.x ?? "", font: { color: "#374151" } }, autosize: true }}
             style={{ width: "100%", height: "100%" }}
             useResizeHandler
             config={{ responsive: true, displayModeBar: true, displaylogo: false }}
@@ -125,9 +119,8 @@ export default function ChartsPanel() {
   );
 }
 
-function buildTraces(d: any, chartType = ""): any[] | null {
+function buildTraces(d: any, chartType: string, C: string[], td: { lineWidth: number; markerSize: number; markerOpacity: number }): any[] | null {
   if (!d) return null;
-  const COLORS = ["#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#ec4899"];
 
   if (d.type === "histogram") {
     return [
@@ -135,7 +128,7 @@ function buildTraces(d: any, chartType = ""): any[] | null {
         type: "bar",
         x: d.bins.map((b: any) => (b.x0 + b.x1) / 2),
         y: d.bins.map((b: any) => b.count),
-        marker: { color: COLORS[0], opacity: 0.8 },
+        marker: { color: C[0], opacity: 0.8 },
         name: "Count",
       },
       {
@@ -143,7 +136,7 @@ function buildTraces(d: any, chartType = ""): any[] | null {
         x: d.kde.map((k: any) => k.x),
         y: d.kde.map((k: any) => k.y * d.bins.reduce((a: number, b: any) => a + b.count, 0) * ((d.bins[0].x1 - d.bins[0].x0))),
         mode: "lines",
-        line: { color: COLORS[1], width: 2 },
+        line: { color: C[1], width: td.lineWidth },
         name: "KDE",
         yaxis: "y",
       },
@@ -160,7 +153,7 @@ function buildTraces(d: any, chartType = ""): any[] | null {
           name: String(g),
           x: d.points.filter((p: any) => p[d.color] === g).map((p: any) => p[d.x]),
           y: d.points.filter((p: any) => p[d.color] === g).map((p: any) => p[d.y]),
-          marker: { color: COLORS[i % COLORS.length], size: 6, opacity: 0.7 },
+          marker: { color: C[i % C.length], size: td.markerSize, opacity: td.markerOpacity },
         })),
         {
           type: "scatter", mode: "lines",
@@ -175,13 +168,13 @@ function buildTraces(d: any, chartType = ""): any[] | null {
         type: "scatter", mode: "markers",
         x: d.points.map((p: any) => p[d.x]),
         y: d.points.map((p: any) => p[d.y]),
-        marker: { color: COLORS[0], size: 6, opacity: 0.7 },
+        marker: { color: C[0], size: td.markerSize, opacity: td.markerOpacity },
         name: d.y,
       },
       {
         type: "scatter", mode: "lines",
         x: d.regression.line_x, y: d.regression.line_y,
-        line: { color: COLORS[1], width: 2 },
+        line: { color: C[1], width: td.lineWidth },
         name: `Fit (R²=${d.regression.r2.toFixed(3)})`,
       },
     ];
@@ -195,19 +188,19 @@ function buildTraces(d: any, chartType = ""): any[] | null {
         name: g.group,
         box: { visible: true },
         meanline: { visible: true },
-        line: { color: COLORS[i % COLORS.length] },
-        fillcolor: COLORS[i % COLORS.length] + "25",
+        line: { color: C[i % C.length] },
+        fillcolor: C[i % C.length] + "25",
         points: g.values.length < 200 ? "all" : false,
         jitter: 0.3,
         pointpos: -1.5,
-        marker: { color: COLORS[i % COLORS.length], size: 3, opacity: 0.5 },
+        marker: { color: C[i % C.length], size: 3, opacity: 0.5 },
       }));
     }
     return d.groups.map((g: any, i: number) => ({
       type: "box",
       y: g.values,
       name: g.group,
-      marker: { color: COLORS[i % COLORS.length] },
+      marker: { color: C[i % C.length] },
       boxpoints: d.groups[0].values.length < 500 ? "outliers" : false,
     }));
   }
@@ -217,7 +210,7 @@ function buildTraces(d: any, chartType = ""): any[] | null {
       type: "bar",
       x: d.data.map((r: any) => r.label),
       y: d.data.map((r: any) => r.value),
-      marker: { color: COLORS[0] },
+      marker: { color: C[0] },
     }];
   }
 
