@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import Plot from "../PlotComponent";
 import { useStore } from "../store";
 import { usePlotLayout, usePalette, useTraceDefaults } from "../plotStyle";
 import { getHistogram, getScatter, getBoxplot, getBar } from "../api";
+import PlotExporter from "./PlotExporter";
 
 export default function ChartsPanel() {
   const session  = useStore((s) => s.session);
@@ -41,6 +42,7 @@ export default function ChartsPanel() {
     }
   };
 
+  const chartRef = useRef<any>(null);
   const traces = plotData ? buildTraces(plotData, chartType, pal, td) : null;
 
   return (
@@ -100,15 +102,19 @@ export default function ChartsPanel() {
       </div>
 
       {/* Plot area */}
-      <div className="flex-1 panel min-h-0">
+      <div className="flex-1 panel min-h-0 relative">
         {traces ? (
+          <>
+          <PlotExporter plotRef={chartRef} title={`Chart_${chartType}_${x}`} />
           <Plot
+            ref={chartRef}
             data={traces}
             layout={{ ...layout, title: { text: plotData?.x ?? "", font: { color: "#374151" } }, autosize: true }}
             style={{ width: "100%", height: "100%" }}
             useResizeHandler
             config={{ responsive: true, displayModeBar: true, displaylogo: false }}
           />
+          </>
         ) : (
           <div className="h-full flex items-center justify-center text-gray-400">
             Configure and generate a chart

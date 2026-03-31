@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import Plot from "../PlotComponent";
+import PlotExporter from "./PlotExporter";
 import { runPower } from "../api";
 import { useStore, PALETTES } from "../store";
 import { Tip } from "./Tip";
@@ -122,6 +123,7 @@ function plainEnglish(
 
 export default function PowerPanel() {
   const showGrid = useStore((s) => s.showGrid);
+  const powerRef = useRef<any>(null);
 
   const [test,       setTest]       = useState<TestId>("t_two");
   const [solveFor,   setSolveFor]   = useState<SolveFor>("n");
@@ -564,6 +566,8 @@ export default function PowerPanel() {
                   Each point = power you'd have at that sample size. <span className="text-red-400">Red dashed</span> = 80% target. <span className="text-indigo-500">●</span> = your n.
                 </p>
               </div>
+              <div className="relative">
+              <PlotExporter plotRef={powerRef} title="Power_Curve" />
               <Plot
                 data={plotTraces as any}
                 layout={{
@@ -578,10 +582,13 @@ export default function PowerPanel() {
                     line: { color: _pal()[0], width: 1.5, dash: "dot" },
                   }] : [],
                 } as any}
+                onInitialized={(_: object, gd: HTMLElement) => { powerRef.current = gd; }}
+                onUpdate={(_: object, gd: HTMLElement)      => { powerRef.current = gd; }}
                 style={{ width: "100%", height: 320 }}
                 useResizeHandler
                 config={{ responsive: true, displaylogo: false, displayModeBar: false }}
               />
+              </div>
 
               {/* Zone legend */}
               <div className="grid grid-cols-3 gap-2 pt-1 border-t border-gray-100">

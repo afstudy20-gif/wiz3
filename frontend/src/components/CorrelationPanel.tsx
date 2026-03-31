@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Plot from "../PlotComponent";
+import PlotExporter from "./PlotExporter";
 import { useStore, PALETTES } from "../store";
 import ResultExporter from "./ResultExporter";
 
@@ -77,6 +78,7 @@ interface PairResult {
 // ── PairwiseTab ───────────────────────────────────────────────────────────────
 function PairwiseTab({ sessionId, columns }: { sessionId: string; columns: string[] }) {
   const showGrid = useStore((s) => s.showGrid);
+  const corrScatterRef = useRef<any>(null);
   const [vars, setVars] = useState<string[]>(columns.slice(0, Math.min(4, columns.length)));
   const [varFilter, setVarFilter] = useState("");
   const [method, setMethod] = useState("auto");
@@ -373,7 +375,8 @@ function PairwiseTab({ sessionId, columns }: { sessionId: string; columns: strin
 
             {/* Scatter plot with regression line + 95% CI band */}
             {active && (
-              <div className="panel flex-1 min-h-0" style={{ minHeight: 300 }}>
+              <div className="panel flex-1 min-h-0 relative" style={{ minHeight: 300 }}>
+                <PlotExporter plotRef={corrScatterRef} title="Correlation_Scatter" />
                 <Plot
                   data={[
                     {
@@ -432,6 +435,8 @@ function PairwiseTab({ sessionId, columns }: { sessionId: string; columns: strin
                     ],
                     margin: { t: 20, r: 20, b: 60, l: 60 },
                   }}
+                  onInitialized={(_: object, gd: HTMLElement) => { corrScatterRef.current = gd; }}
+                  onUpdate={(_: object, gd: HTMLElement)      => { corrScatterRef.current = gd; }}
                   style={{ width: "100%", height: "100%" }}
                   useResizeHandler
                   config={{ responsive: true, displayModeBar: false }}
@@ -452,6 +457,8 @@ function PairwiseTab({ sessionId, columns }: { sessionId: string; columns: strin
 // ── MatrixTab ─────────────────────────────────────────────────────────────────
 function MatrixTab({ sessionId, columns }: { sessionId: string; columns: string[] }) {
   const showGrid = useStore((s) => s.showGrid);
+  const corrHeatmapRef = useRef<any>(null);
+  const corrSplomRef = useRef<any>(null);
   const [selected, setSelected] = useState<string[]>(columns.slice(0, Math.min(8, columns.length)));
   const [colFilter, setColFilter] = useState("");
   const [method, setMethod] = useState("pearson");
@@ -656,7 +663,8 @@ function MatrixTab({ sessionId, columns }: { sessionId: string; columns: string[
 
               {displayMode === "heatmap" ? (
                 /* Heatmap */
-                <div className="panel flex-1 min-h-0 flex flex-col gap-2">
+                <div className="panel flex-1 min-h-0 flex flex-col gap-2 relative">
+                  <PlotExporter plotRef={corrHeatmapRef} title="Correlation_Matrix" />
                   <div className="flex items-center justify-between flex-shrink-0">
                     <span className="text-xs font-semibold text-gray-500">Correlation Matrix</span>
                     <button
@@ -702,6 +710,8 @@ function MatrixTab({ sessionId, columns }: { sessionId: string; columns: string[
                       yaxis: { showgrid: showGrid, gridcolor: "#e5e7eb", zeroline: false },
                       margin: { t: 20, r: 20, b: 100, l: 100 },
                     }}
+                    onInitialized={(_: object, gd: HTMLElement) => { corrHeatmapRef.current = gd; }}
+                    onUpdate={(_: object, gd: HTMLElement)      => { corrHeatmapRef.current = gd; }}
                     style={{ width: "100%", height: "100%", flex: 1 }}
                     useResizeHandler
                     config={{ responsive: true, displayModeBar: false }}
@@ -717,7 +727,8 @@ function MatrixTab({ sessionId, columns }: { sessionId: string; columns: string[
                 </div>
               ) : (
                 /* Scatter Matrix (SPLOM) */
-                <div className="panel flex-1 min-h-0 flex flex-col gap-2">
+                <div className="panel flex-1 min-h-0 flex flex-col gap-2 relative">
+                  <PlotExporter plotRef={corrSplomRef} title="Scatter_Matrix" />
                   <div className="flex items-center justify-between flex-shrink-0">
                     <span className="text-xs font-semibold text-gray-500">
                       Scatter Matrix
@@ -758,6 +769,8 @@ function MatrixTab({ sessionId, columns }: { sessionId: string; columns: string[
                         margin: { t: 20, r: 20, b: 20, l: 20 },
                         dragmode: "select" as const,
                       }}
+                      onInitialized={(_: object, gd: HTMLElement) => { corrSplomRef.current = gd; }}
+                      onUpdate={(_: object, gd: HTMLElement)      => { corrSplomRef.current = gd; }}
                       style={{ width: "100%", flex: 1 }}
                       useResizeHandler
                       config={{ responsive: true, displayModeBar: false }}
@@ -791,6 +804,7 @@ function MatrixTab({ sessionId, columns }: { sessionId: string; columns: string[
 // ── ICCTab ────────────────────────────────────────────────────────────────────
 function ICCTab({ sessionId, columns }: { sessionId: string; columns: string[] }) {
   const showGrid = useStore((s) => s.showGrid);
+  const blandAltmanRef = useRef<any>(null);
   const [rater1, setRater1] = useState(columns[0] ?? "");
   const [rater2, setRater2] = useState(columns[1] ?? "");
   const [data, setData] = useState<any>(null);
@@ -881,8 +895,10 @@ function ICCTab({ sessionId, columns }: { sessionId: string; columns: string[] }
         )}
       </div>
 
-      <div className="flex-1 panel min-h-0">
+      <div className="flex-1 panel min-h-0 relative">
         {data ? (
+          <>
+          <PlotExporter plotRef={blandAltmanRef} title="Bland_Altman_Plot" />
           <Plot
             data={[{
               type: "scatter", mode: "markers",
@@ -909,10 +925,13 @@ function ICCTab({ sessionId, columns }: { sessionId: string; columns: string[] }
               margin: { t: 20, r: 130, b: 60, l: 60 },
               title: { text: "Bland-Altman Plot", font: { color: "#374151", size: 12 } },
             }}
+            onInitialized={(_: object, gd: HTMLElement) => { blandAltmanRef.current = gd; }}
+            onUpdate={(_: object, gd: HTMLElement)      => { blandAltmanRef.current = gd; }}
             style={{ width: "100%", height: "100%" }}
             useResizeHandler
             config={{ responsive: true, displayModeBar: false }}
           />
+          </>
         ) : (
           <div className="h-full flex items-center justify-center text-gray-400">
             Select two rater columns and click Compute
@@ -926,6 +945,7 @@ function ICCTab({ sessionId, columns }: { sessionId: string; columns: string[] }
 // ── KappaTab ──────────────────────────────────────────────────────────────────
 function KappaTab({ sessionId, columns }: { sessionId: string; columns: string[] }) {
   const showGrid = useStore((s) => s.showGrid);
+  const kappaMatrixRef = useRef<any>(null);
   const [rater1, setRater1] = useState(columns[0] ?? "");
   const [rater2, setRater2] = useState(columns[1] ?? "");
   const [data, setData] = useState<any>(null);
@@ -1016,8 +1036,10 @@ function KappaTab({ sessionId, columns }: { sessionId: string; columns: string[]
         )}
       </div>
 
-      <div className="flex-1 panel min-h-0">
+      <div className="flex-1 panel min-h-0 relative">
         {data ? (
+          <>
+          <PlotExporter plotRef={kappaMatrixRef} title="Kappa_Confusion_Matrix" />
           <Plot
             data={[{
               type: "heatmap",
@@ -1038,10 +1060,13 @@ function KappaTab({ sessionId, columns }: { sessionId: string; columns: string[]
               yaxis: { showgrid: showGrid, gridcolor: "#e5e7eb", zeroline: false },
               margin: { t: 50, r: 20, b: 80, l: 100 },
             }}
+            onInitialized={(_: object, gd: HTMLElement) => { kappaMatrixRef.current = gd; }}
+            onUpdate={(_: object, gd: HTMLElement)      => { kappaMatrixRef.current = gd; }}
             style={{ width: "100%", height: "100%" }}
             useResizeHandler
             config={{ responsive: true, displayModeBar: false }}
           />
+          </>
         ) : (
           <div className="h-full flex items-center justify-center text-gray-400">
             Select two rater columns and click Compute

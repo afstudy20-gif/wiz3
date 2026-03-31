@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import Plot from "../PlotComponent";
+import PlotExporter from "./PlotExporter";
 import { useStore, PALETTES } from "../store";
 import { runROC, runROCCompare, runROCCombined } from "../api";
 import { Tip, InfoBanner } from "./Tip";
@@ -147,6 +148,9 @@ export default function ROCPanel() {
   // ── Shared ──
   const [outcomeCol, setOutcomeCol] = useState(defaultOutcome);
   const rocPlotRef = useRef<any>(null);
+  const rocSingleRef = useRef<any>(null);
+  const rocCompareRef = useRef<any>(null);
+  const rocMultiRef = useRef<any>(null);
 
   // ── Single-curve state ──
   const [scoreCol,     setScoreCol]     = useState(numCols[0] ?? "");
@@ -871,6 +875,8 @@ export default function ROCPanel() {
 
           {/* ── Single plot ── */}
           {mode === "single" && result && (
+            <div className="relative" style={{ width: "100%", height: "100%" }}>
+            <PlotExporter plotRef={rocSingleRef} title="ROC_Curve" />
             <Plot
               data={[
                 {
@@ -921,16 +927,19 @@ export default function ROCPanel() {
                   xanchor: "right" as const, yanchor: "bottom" as const,
                 }],
               }}
-              onInitialized={(_: object, gd: HTMLElement) => { rocPlotRef.current = gd; }}
-              onUpdate={(_: object, gd: HTMLElement)      => { rocPlotRef.current = gd; }}
+              onInitialized={(_: object, gd: HTMLElement) => { rocPlotRef.current = gd; rocSingleRef.current = gd; }}
+              onUpdate={(_: object, gd: HTMLElement)      => { rocPlotRef.current = gd; rocSingleRef.current = gd; }}
               style={{ width: "100%", height: "100%" }}
               useResizeHandler
               config={{ responsive: true, displaylogo: false, displayModeBar: false }}
             />
+            </div>
           )}
 
           {/* ── DeLong comparison plot (publication quality) ── */}
           {mode === "single" && cmpResult && cmpResult.curve_1 && cmpResult.curve_2 && (
+            <div className="relative" style={{ width: "100%", height: "100%" }}>
+            <PlotExporter plotRef={rocCompareRef} title="ROC_DeLong_Comparison" />
             <Plot
               data={[
                 // Baseline model (blue dashed)
@@ -994,16 +1003,19 @@ export default function ROCPanel() {
                   },
                 ],
               }}
-              onInitialized={(_: object, gd: HTMLElement) => { rocPlotRef.current = gd; }}
-              onUpdate={(_: object, gd: HTMLElement)      => { rocPlotRef.current = gd; }}
+              onInitialized={(_: object, gd: HTMLElement) => { rocPlotRef.current = gd; rocCompareRef.current = gd; }}
+              onUpdate={(_: object, gd: HTMLElement)      => { rocPlotRef.current = gd; rocCompareRef.current = gd; }}
               style={{ width: "100%", height: "100%" }}
               useResizeHandler
               config={{ responsive: true, displaylogo: false, displayModeBar: false }}
             />
+            </div>
           )}
 
           {/* ── Multi-curve plot ── */}
           {mode === "multi" && multiResults.length > 0 && (
+            <div className="relative" style={{ width: "100%", height: "100%" }}>
+            <PlotExporter plotRef={rocMultiRef} title="ROC_Multi_Curve" />
             <Plot
               data={multiTraces as any}
               layout={{
@@ -1019,12 +1031,13 @@ export default function ROCPanel() {
                   x: 0.5, y: 0.05, xanchor: "left" as const, yanchor: "bottom" as const,
                 },
               }}
-              onInitialized={(_: object, gd: HTMLElement) => { rocPlotRef.current = gd; }}
-              onUpdate={(_: object, gd: HTMLElement)      => { rocPlotRef.current = gd; }}
+              onInitialized={(_: object, gd: HTMLElement) => { rocPlotRef.current = gd; rocMultiRef.current = gd; }}
+              onUpdate={(_: object, gd: HTMLElement)      => { rocPlotRef.current = gd; rocMultiRef.current = gd; }}
               style={{ width: "100%", height: "100%" }}
               useResizeHandler
               config={{ responsive: true, displaylogo: false, displayModeBar: false }}
             />
+            </div>
           )}
 
           {/* ── Empty state ── */}

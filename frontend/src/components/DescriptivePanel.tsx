@@ -4,6 +4,7 @@ import { usePalette } from "../plotStyle";
 import api from "../api";
 import Plot from "../PlotComponent";
 import ResultExporter from "./ResultExporter";
+import PlotExporter from "./PlotExporter";
 
 // ── Inline sparkline SVG (real histogram / category bars) ────────────────────
 
@@ -74,6 +75,7 @@ function NumericView({ summary }: { summary: any }) {
   const [chartTab, setChartTab] = useState<ChartTab>("histogram");
   const showGrid = useStore((s) => s.showGrid);
   const pal = usePalette();
+  const plotRef = useRef<any>(null);
   const P = pal[0]; // primary color
 
   const histData = [{
@@ -150,7 +152,9 @@ function NumericView({ summary }: { summary: any }) {
 
       {/* Histogram */}
       {chartTab === "histogram" && (
-        <Plot
+        <div className="relative">
+        <PlotExporter plotRef={plotRef} title="Histogram" />
+        <Plot ref={plotRef}
           data={histData}
           layout={{ ...BASE_LAYOUT, autosize: true, bargap: 0.02,
             xaxis: { ...BASE_LAYOUT.xaxis, showgrid: showGrid, title: { text: "Value" } },
@@ -159,11 +163,14 @@ function NumericView({ summary }: { summary: any }) {
           style={{ width: "100%", height: 380 }}
           useResizeHandler config={{ responsive: true, displaylogo: false, displayModeBar: false }}
         />
+        </div>
       )}
 
       {/* Box Plot */}
       {chartTab === "boxplot" && (
-        <Plot
+        <div className="relative">
+        <PlotExporter plotRef={plotRef} title="BoxPlot" />
+        <Plot ref={plotRef}
           data={boxData}
           layout={{
             ...BASE_LAYOUT,
@@ -186,11 +193,14 @@ function NumericView({ summary }: { summary: any }) {
           style={{ width: "100%", height: 380 }}
           useResizeHandler config={{ responsive: true, displaylogo: false, displayModeBar: false }}
         />
+        </div>
       )}
 
       {/* Violin Plot */}
       {chartTab === "violin" && (
-        <Plot
+        <div className="relative">
+        <PlotExporter plotRef={plotRef} title="Violin" />
+        <Plot ref={plotRef}
           data={[{
             type: "violin" as any,
             y: summary.raw_values ?? [],
@@ -230,11 +240,14 @@ function NumericView({ summary }: { summary: any }) {
           style={{ width: "100%", height: 380 }}
           useResizeHandler config={{ responsive: true, displaylogo: false, displayModeBar: false }}
         />
+        </div>
       )}
 
       {/* Q-Q Plot */}
       {chartTab === "qq" && (
-        <Plot
+        <div className="relative">
+        <PlotExporter plotRef={plotRef} title="QQ_Plot" />
+        <Plot ref={plotRef}
           data={qqData}
           layout={{ ...BASE_LAYOUT, autosize: true,
             title: { text: "Q-Q Plot (Normality)", font: { color: "#374151", size: 12 } },
@@ -244,6 +257,7 @@ function NumericView({ summary }: { summary: any }) {
           style={{ width: "100%", height: 380 }}
           useResizeHandler config={{ responsive: true, displaylogo: false, displayModeBar: false }}
         />
+        </div>
       )}
     </div>
   );
