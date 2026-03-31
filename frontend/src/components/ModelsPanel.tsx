@@ -4,6 +4,7 @@ import { useStore } from "../store";
 import { runLinear, runLogistic, runKM, runCox, runLogisticTable, runRCS, runPoisson, getSparklines } from "../api";
 import { Tip, InfoBanner } from "./Tip";
 import ResultExporter from "./ResultExporter";
+import PlotExporter from "./PlotExporter";
 import { MissingGuard, type ImputationStrategy } from "./MissingGuard";
 
 const PLOT_LAYOUT = {
@@ -456,6 +457,7 @@ function ForestPlot({ result, modelType, outcome }: {
   modelType: string;
   outcome?: string;
 }) {
+  const forestRef = useRef<any>(null);
   const isORTable = modelType === "ortable";
   const isCox     = modelType === "cox";
   const metric    = isCox ? "HR" : "OR";
@@ -536,7 +538,10 @@ function ForestPlot({ result, modelType, outcome }: {
     });
 
     return (
+      <div className="relative">
+      <PlotExporter plotRef={forestRef} title={`Forest_${metric}_${outcome ?? "model"}`} />
       <Plot
+        ref={forestRef}
         data={[
           {
             name: "Univariate",
@@ -613,6 +618,7 @@ function ForestPlot({ result, modelType, outcome }: {
         useResizeHandler
         config={{ responsive: true, displaylogo: false, displayModeBar: false }}
       />
+      </div>
     );
   }
 
@@ -653,7 +659,10 @@ function ForestPlot({ result, modelType, outcome }: {
   ];
 
   return (
+    <div className="relative">
+    <PlotExporter plotRef={forestRef} title={`Forest_${metric}_${outcome ?? "model"}`} />
     <Plot
+      ref={forestRef}
       data={[{
         type: "scatter", mode: "markers",
         x: estimates,
@@ -711,6 +720,7 @@ function ForestPlot({ result, modelType, outcome }: {
       useResizeHandler
       config={{ responsive: true, displaylogo: false, displayModeBar: false }}
     />
+    </div>
   );
 }
 

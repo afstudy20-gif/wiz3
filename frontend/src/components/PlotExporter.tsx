@@ -16,6 +16,7 @@ export default function PlotExporter({ plotRef, title = "chart", className = "" 
   const [width, setWidth]   = useState(1200);
   const [height, setHeight] = useState(700);
   const [fmt, setFmt]       = useState<"png" | "svg">("png");
+  const [dpi, setDpi]       = useState(300);
   const [busy, setBusy]     = useState(false);
 
   const safeTitle = title.replace(/[^\w\s-]/g, "").replace(/\s+/g, "_").slice(0, 40) || "chart";
@@ -29,7 +30,8 @@ export default function PlotExporter({ plotRef, title = "chart", className = "" 
       // Lazy import: plotly is already in the bundle (loaded by chart components),
       // so this resolves instantly from the module cache with no extra network cost.
       const Plotly = (await import("plotly.js")).default;
-      await Plotly.downloadImage(el, { format: fmt, width, height, filename: safeTitle });
+      const scale = fmt === "png" ? dpi / 72 : 1;  // SVG is vector, no DPI needed
+      await Plotly.downloadImage(el, { format: fmt, width, height, filename: safeTitle, ...(scale !== 1 ? { scale } : {}) } as any);
     } finally {
       setBusy(false);
       setOpen(false);
@@ -71,6 +73,20 @@ export default function PlotExporter({ plotRef, title = "chart", className = "" 
               </button>
             ))}
           </div>
+
+          {fmt === "png" && (
+            <div>
+              <label className="text-[10px] text-gray-400 block mb-0.5">DPI (resolution)</label>
+              <div className="flex rounded overflow-hidden border border-gray-200">
+                {[150, 300, 600].map(d => (
+                  <button key={d} onClick={() => setDpi(d)}
+                    className={`flex-1 text-xs py-1 transition-colors ${dpi === d ? "bg-indigo-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>
+                    {d}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <button onClick={downloadImage} disabled={busy} className="btn-primary w-full text-xs py-1.5">
             {busy ? "Exporting…" : `Download ${fmt.toUpperCase()}`}
