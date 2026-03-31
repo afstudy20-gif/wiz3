@@ -59,9 +59,11 @@ function ResultCard({ result }: { result: any }) {
   };
 
   const skip = ["test", "interpretation", "significant", "crosstab", "groups",
-                "table", "row_labels", "col_labels", "curve"];
+                "table", "row_labels", "col_labels", "curve", "effect_sizes",
+                "assumptions", "warnings", "summary", "posthoc", "posthoc_method",
+                "result_text", "export_rows"];
 
-  const statEntries = Object.entries(result).filter(([k]) => !skip.includes(k));
+  const statEntries = Object.entries(result).filter(([k]) => !skip.includes(k) && typeof result[k] !== "object");
   const exportHeaders = ["Statistic", "Value"];
   const exportRows = statEntries.map(([k, v]) => [k, fmt(v)]);
 
@@ -90,6 +92,91 @@ function ResultCard({ result }: { result: any }) {
             </div>
           ))}
       </div>
+
+      {/* Effect Sizes */}
+      {result.effect_sizes?.length > 0 && (
+        <div className="mt-2 space-y-1">
+          <p className="text-xs font-semibold text-gray-600">Effect Sizes</p>
+          {result.effect_sizes.map((es: any, i: number) => (
+            <div key={i} className="flex items-center gap-3 bg-indigo-50 rounded-lg px-3 py-1.5 text-xs">
+              <span className="font-semibold text-indigo-800">{es.name?.replace(/_/g, " ")}</span>
+              <span className="font-mono text-indigo-700">{es.value?.toFixed(3)}</span>
+              {es.ci_low != null && es.ci_high != null && (
+                <span className="text-indigo-500">95% CI: [{es.ci_low?.toFixed(3)}, {es.ci_high?.toFixed(3)}]</span>
+              )}
+              {es.magnitude && (
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                  es.magnitude === "large" ? "bg-red-100 text-red-700" :
+                  es.magnitude === "medium" ? "bg-amber-100 text-amber-700" :
+                  es.magnitude === "small" ? "bg-blue-100 text-blue-700" :
+                  "bg-gray-100 text-gray-500"}`}>
+                  {es.magnitude}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Assumptions */}
+      {result.assumptions?.length > 0 && (
+        <div className="mt-2 space-y-1">
+          <p className="text-xs font-semibold text-gray-600">Assumption Checks</p>
+          {result.assumptions.map((a: any, i: number) => (
+            <div key={i} className={`flex items-center gap-2 text-xs px-3 py-1 rounded-lg ${a.met ? "bg-green-50 text-green-800" : "bg-amber-50 text-amber-800"}`}>
+              <span>{a.met ? "✓" : "⚠"}</span>
+              <span className="font-medium">{a.name}</span>
+              <span className="text-gray-500">— {a.detail}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Warnings */}
+      {result.warnings?.length > 0 && (
+        <div className="mt-2 space-y-1">
+          {result.warnings.map((w: string, i: number) => (
+            <div key={i} className="flex items-center gap-2 text-xs px-3 py-1 rounded-lg bg-amber-50 text-amber-800">
+              <span>⚠</span> {w}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Post-hoc results */}
+      {result.posthoc?.length > 0 && (
+        <div className="mt-3">
+          <p className="text-xs font-semibold text-gray-600 mb-1">
+            Post-hoc: {result.posthoc_method ?? "Pairwise comparisons"}
+          </p>
+          <div className="overflow-auto rounded border border-gray-200">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-gray-50">
+                  <th className="px-2 py-1 text-left">Comparison</th>
+                  <th className="px-2 py-1 text-right">Statistic</th>
+                  <th className="px-2 py-1 text-right">p (adj)</th>
+                  <th className="px-2 py-1 text-right">Effect size</th>
+                  <th className="px-2 py-1 text-center">Sig</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.posthoc.map((ph: any, i: number) => (
+                  <tr key={i} className={`border-t border-gray-100 ${ph.significant ? "" : "text-gray-400"}`}>
+                    <td className="px-2 py-1 font-medium">{ph.group1} vs {ph.group2}</td>
+                    <td className="px-2 py-1 text-right font-mono">{ph.statistic?.toFixed(3)}</td>
+                    <td className="px-2 py-1 text-right font-mono">{ph.p_adj < 0.001 ? "<0.001" : ph.p_adj?.toFixed(4)}</td>
+                    <td className="px-2 py-1 text-right font-mono">
+                      {ph.effect_size ? `${ph.effect_size.value?.toFixed(3)} (${ph.effect_size.magnitude})` : ph.rank_diff?.toFixed(2) ?? "—"}
+                    </td>
+                    <td className="px-2 py-1 text-center">{ph.significant ? "✓" : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {result.groups && (
         <div className="overflow-auto rounded border border-gray-200 mt-2">

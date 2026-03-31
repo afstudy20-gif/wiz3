@@ -7,6 +7,12 @@ from pydantic import BaseModel
 from typing import Optional, List
 from services import store
 from services.impute import apply_imputation, missing_info
+from services.stat_utils import (
+    cohen_d, cohen_d_one_sample, eta_squared, partial_eta_squared, omega_squared,
+    rank_biserial_r, cramers_v, odds_ratio_effect, epsilon_squared,
+    check_normality, check_equal_variances, group_summary,
+    adjust_pvalues, pairwise_t_tests, pairwise_wilcoxon, tukey_hsd, games_howell, dunn_test,
+)
 
 
 def _safe_json(obj) -> Response:
@@ -134,28 +140,47 @@ def ttest(req: TTestRequest):
         groups = df[req.group_column].dropna().unique()
         if len(groups) != 2:
             raise HTTPException(status_code=400, detail="Group column must have exactly 2 groups")
-        g1 = df[df[req.group_column] == groups[0]][req.column].dropna()
-        g2 = df[df[req.group_column] == groups[1]][req.column].dropna()
-        stat, p = scipy_stats.ttest_ind(g1, g2, equal_var=req.equal_var)
+        g1 = df[df[req.group_column] == groups[0]][req.column].dropna().astype(float).values
+        g2 = df[df[req.group_column] == groups[1]][req.column].dropna().astype(float).values
+
+        # Assumption checks
+        assumptions = [check_normality(g1, str(groups[0])), check_normality(g2, str(groups[1])),
+                       check_equal_variances([g1, g2], [str(groups[0]), str(groups[1])])]
+        use_welch = not assumptions[2]["met"]
+        stat, p = scipy_stats.ttest_ind(g1, g2, equal_var=not use_welch)
         sig = bool(p < 0.05)
+        es = cohen_d(g1, g2)
+        p_str = '<0.001' if p < 0.001 else f'{p:.4f}'
+
         return {
-            "test": "Independent samples t-test",
+            "test": f"Independent samples t-test{' (Welch)' if use_welch else ''}",
             "group1": str(groups[0]), "n1": len(g1), "mean1": float(g1.mean()),
             "group2": str(groups[1]), "n2": len(g2), "mean2": float(g2.mean()),
-            "t": float(stat), "p": float(p),
+            "t": float(stat), "p": float(p), "df": int(len(g1) + len(g2) - 2),
             "significant": sig,
-            "interpretation": f"{'Significant' if sig else 'No significant'} difference between groups (p={'<0.001' if p < 0.001 else f'{p:.4f}'})",
+            "effect_sizes": [es],
+            "assumptions": assumptions,
+            "summary": {str(groups[0]): group_summary(g1, str(groups[0])),
+                        str(groups[1]): group_summary(g2, str(groups[1]))},
+            "interpretation": f"{'Significant' if sig else 'No significant'} difference between groups (t = {stat:.3f}, p = {p_str}, Hedges' g = {es['value']:.3f} [{es['magnitude']}])",
         }
     else:
-        stat, p = scipy_stats.ttest_1samp(col, req.mu)
+        x = col.astype(float).values
+        stat, p = scipy_stats.ttest_1samp(x, req.mu)
         sig = bool(p < 0.05)
+        es = cohen_d_one_sample(x, req.mu)
+        p_str = '<0.001' if p < 0.001 else f'{p:.4f}'
+
         return {
             "test": "One-sample t-test",
-            "mu": req.mu, "n": len(col),
-            "mean": float(col.mean()), "std": float(col.std()),
-            "t": float(stat), "p": float(p),
+            "mu": req.mu, "n": len(x),
+            "mean": float(x.mean()), "std": float(x.std(ddof=1)),
+            "t": float(stat), "p": float(p), "df": int(len(x) - 1),
             "significant": sig,
-            "interpretation": f"Mean {'is' if not sig else 'is not'} equal to {req.mu} (p={'<0.001' if p < 0.001 else f'{p:.4f}'})",
+            "effect_sizes": [es],
+            "assumptions": [check_normality(x, req.column)],
+            "summary": {"sample": group_summary(x, "Sample")},
+            "interpretation": f"Mean {'differs from' if sig else 'does not differ from'} {req.mu} (t = {stat:.3f}, p = {p_str}, Cohen's d = {es['value']:.3f} [{es['magnitude']}])",
         }
 
 
@@ -173,12 +198,26 @@ def chisquare(req: ChiSqRequest):
     ct = pd.crosstab(df[req.row_column], df[req.col_column])
     chi2, p, dof, expected = scipy_stats.chi2_contingency(ct)
     sig = bool(p < 0.05)
+    n = ct.values.sum()
+    min_dim = min(ct.shape)
+    es = cramers_v(chi2, n, min_dim)
+    # Odds ratio for 2x2 tables
+    effect_sizes = [es]
+    if ct.shape == (2, 2):
+        effect_sizes.append(odds_ratio_effect(ct.values))
+    # Warning for small expected counts
+    warnings = []
+    if (expected < 5).any():
+        warnings.append("Some expected cell counts < 5. Consider Fisher's exact test instead.")
+    p_str = '<0.001' if p < 0.001 else f'{p:.4f}'
     return {
         "test": "Chi-square test of independence",
-        "chi2": float(chi2), "p": float(p), "dof": int(dof),
+        "chi2": float(chi2), "p": float(p), "dof": int(dof), "n": int(n),
         "significant": sig,
+        "effect_sizes": effect_sizes,
+        "warnings": warnings,
         "crosstab": ct.to_dict(),
-        "interpretation": f"{'Significant' if sig else 'No significant'} association (p={'<0.001' if p < 0.001 else f'{p:.4f}'})",
+        "interpretation": f"{'Significant' if sig else 'No significant'} association (\u03C7\u00B2({dof}) = {chi2:.2f}, p = {p_str}, Cramer's V = {es['value']:.3f} [{es['magnitude']}])",
     }
 
 
@@ -233,19 +272,24 @@ def mannwhitney(req: MannWhitneyRequest):
     groups = df[req.group_column].dropna().unique()
     if len(groups) != 2:
         raise HTTPException(status_code=400, detail="Group column must have exactly 2 groups")
-    g1 = df[df[req.group_column] == groups[0]][req.column].dropna()
-    g2 = df[df[req.group_column] == groups[1]][req.column].dropna()
+    g1 = df[df[req.group_column] == groups[0]][req.column].dropna().astype(float).values
+    g2 = df[df[req.group_column] == groups[1]][req.column].dropna().astype(float).values
     stat, p = scipy_stats.mannwhitneyu(g1, g2, alternative="two-sided")
     sig = bool(p < 0.05)
+    es = rank_biserial_r(float(stat), len(g1), len(g2))
+    p_str = '<0.001' if p < 0.001 else f'{p:.4f}'
     return {
         "test": "Mann-Whitney U test",
         "group1": str(groups[0]), "n1": int(len(g1)),
-        "median1": float(g1.median()), "iqr1": float(g1.quantile(0.75) - g1.quantile(0.25)),
+        "median1": float(np.median(g1)), "iqr1": float(np.percentile(g1, 75) - np.percentile(g1, 25)),
         "group2": str(groups[1]), "n2": int(len(g2)),
-        "median2": float(g2.median()), "iqr2": float(g2.quantile(0.75) - g2.quantile(0.25)),
+        "median2": float(np.median(g2)), "iqr2": float(np.percentile(g2, 75) - np.percentile(g2, 25)),
         "U": float(stat), "p": float(p),
         "significant": sig,
-        "interpretation": f"{'Significant' if sig else 'No significant'} difference between groups (p={'<0.001' if p < 0.001 else f'{p:.4f}'})",
+        "effect_sizes": [es],
+        "summary": {str(groups[0]): group_summary(g1, str(groups[0])),
+                    str(groups[1]): group_summary(g2, str(groups[1]))},
+        "interpretation": f"{'Significant' if sig else 'No significant'} difference (U = {stat:.1f}, p = {p_str}, r = {es['value']:.3f} [{es['magnitude']}])",
     }
 
 
@@ -262,18 +306,21 @@ def fisher_exact(req: FisherRequest):
     df = _get_df(req.session_id)
     ct = pd.crosstab(df[req.row_column], df[req.col_column])
     if ct.shape != (2, 2):
-        raise HTTPException(status_code=400, detail="Fisher's exact test requires a 2×2 table")
+        raise HTTPException(status_code=400, detail="Fisher's exact test requires a 2\u00D72 table")
     table = ct.values.tolist()
-    odds_ratio, p = scipy_stats.fisher_exact(ct.values)
+    or_val, p = scipy_stats.fisher_exact(ct.values)
     sig = bool(p < 0.05)
+    es = odds_ratio_effect(ct.values)
+    p_str = '<0.001' if p < 0.001 else f'{p:.4f}'
     return {
         "test": "Fisher's exact test",
-        "odds_ratio": float(odds_ratio), "p": float(p),
+        "odds_ratio": float(or_val), "p": float(p),
         "significant": sig,
+        "effect_sizes": [es],
         "table": table,
         "row_labels": ct.index.tolist(),
         "col_labels": ct.columns.tolist(),
-        "interpretation": f"{'Significant' if sig else 'No significant'} association (p={'<0.001' if p < 0.001 else f'{p:.4f}'})",
+        "interpretation": f"{'Significant' if sig else 'No significant'} association (p = {p_str}, OR = {es['value']:.2f}, 95% CI: {es['ci_low']:.2f}\u2013{es['ci_high']:.2f})",
     }
 
 
@@ -288,11 +335,20 @@ class KruskalRequest(BaseModel):
 @router.post("/kruskal")
 def kruskal(req: KruskalRequest):
     df = _get_df(req.session_id)
-    group_data = [g[req.column].dropna().values for _, g in df.groupby(req.group_column)]
+    grp_dict = {str(name): g[req.column].dropna().astype(float).values
+                for name, g in df.groupby(req.group_column)}
+    group_data = list(grp_dict.values())
     if len(group_data) < 2:
         raise HTTPException(status_code=400, detail="Need at least 2 groups")
     stat, p = scipy_stats.kruskal(*group_data)
     sig = bool(p < 0.05)
+    n_total = sum(len(g) for g in group_data)
+    es = epsilon_squared(float(stat), n_total)
+    p_str = '<0.001' if p < 0.001 else f'{p:.4f}'
+
+    # Post-hoc: Dunn's test (only if significant and > 2 groups)
+    posthoc = dunn_test(grp_dict, correction="holm") if sig and len(grp_dict) > 2 else []
+
     group_stats = df.groupby(req.group_column)[req.column].agg(
         n="count", median="median",
         q1=lambda x: x.quantile(0.25),
@@ -302,11 +358,14 @@ def kruskal(req: KruskalRequest):
         "test": "Kruskal-Wallis test",
         "H": float(stat), "p": float(p),
         "significant": sig,
+        "effect_sizes": [es],
+        "posthoc": posthoc,
+        "posthoc_method": "Dunn's test (Holm correction)" if posthoc else None,
         "groups": [
             {k: (float(v) if hasattr(v, '__float__') else str(v)) for k, v in row.items()}
             for row in group_stats.to_dict(orient="records")
         ],
-        "interpretation": f"{'Significant' if sig else 'No significant'} difference across groups (p={'<0.001' if p < 0.001 else f'{p:.4f}'})",
+        "interpretation": f"{'Significant' if sig else 'No significant'} difference across groups (H = {stat:.2f}, p = {p_str}, \u03B5\u00B2 = {es['value']:.3f} [{es['magnitude']}])",
     }
 
 
@@ -1081,21 +1140,60 @@ class AnovaRequest(BaseModel):
 @router.post("/anova")
 def anova(req: AnovaRequest):
     df = _get_df(req.session_id)
-    groups = [g[req.column].dropna().values for _, g in df.groupby(req.group_column)]
-    if len(groups) < 2:
+    grp_dict = {str(name): g[req.column].dropna().astype(float).values
+                for name, g in df.groupby(req.group_column)}
+    group_arrays = list(grp_dict.values())
+    group_names = list(grp_dict.keys())
+    if len(group_arrays) < 2:
         raise HTTPException(status_code=400, detail="Need at least 2 groups")
-    stat, p = scipy_stats.f_oneway(*groups)
+
+    stat, p = scipy_stats.f_oneway(*group_arrays)
     sig = bool(p < 0.05)
+    k = len(group_arrays)
+    n_total = sum(len(g) for g in group_arrays)
+    df_between = k - 1
+    df_within = n_total - k
+    # MS_within for omega-squared
+    grand_mean = np.concatenate(group_arrays).mean()
+    ss_within = sum(np.sum((g - g.mean())**2) for g in group_arrays)
+    ms_within = ss_within / df_within if df_within > 0 else 1
+
+    es_eta = eta_squared(float(stat), df_between, df_within)
+    es_omega = omega_squared(float(stat), df_between, df_within, ms_within)
+
+    # Assumption checks
+    assumptions = [check_equal_variances(group_arrays, group_names)]
+    for name, arr in grp_dict.items():
+        assumptions.append(check_normality(arr, name))
+
+    # Post-hoc tests (if significant and > 2 groups)
+    posthoc = []
+    posthoc_method = None
+    if sig and k > 2:
+        equal_var = assumptions[0]["met"]
+        if equal_var:
+            posthoc = tukey_hsd(grp_dict)
+            posthoc_method = "Tukey HSD"
+        else:
+            posthoc = games_howell(grp_dict)
+            posthoc_method = "Games-Howell (unequal variances)"
+
+    p_str = '<0.001' if p < 0.001 else f'{p:.4f}'
     group_stats = df.groupby(req.group_column)[req.column].agg(["count", "mean", "std"]).reset_index()
     return {
         "test": "One-way ANOVA",
         "F": float(stat), "p": float(p),
+        "df_between": df_between, "df_within": df_within,
         "significant": sig,
+        "effect_sizes": [es_eta, es_omega],
+        "assumptions": assumptions,
+        "posthoc": posthoc,
+        "posthoc_method": posthoc_method,
         "groups": [
             {k: (float(v) if isinstance(v, (int, float)) else str(v)) for k, v in row.items()}
             for row in group_stats.to_dict(orient="records")
         ],
-        "interpretation": f"{'Significant' if sig else 'No significant'} difference across groups (p={'<0.001' if p < 0.001 else f'{p:.4f}'})",
+        "interpretation": f"{'Significant' if sig else 'No significant'} difference across groups (F({df_between},{df_within}) = {stat:.2f}, p = {p_str}, \u03B7\u00B2 = {es_eta['value']:.3f} [{es_eta['magnitude']}])",
     }
 
 
