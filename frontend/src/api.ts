@@ -106,6 +106,19 @@ export const runMissingPattern = (data: object) => api.post("/api/missing_data/p
 export const runMCARTest     = (data: object) => api.post("/api/missing_data/mcar_test", data);
 export const runImputationCompare = (data: object) => api.post("/api/missing_data/imputation_compare", data);
 
+// Diagnostics
+export const runLinearDiagFull = (data: object) => api.post("/api/diagnostics/linear_full", data);
+export const runLogisticDiag   = (data: object) => api.post("/api/model_diagnostics/logistic_diagnostics", data);
+export const runCoxDiag        = (data: object) => api.post("/api/model_diagnostics/cox_diagnostics", data);
+
+// Decision curve
+export const runCalibration    = (data: object) => api.post("/api/decision_curve/calibration", data);
+export const runDCA            = (data: object) => api.post("/api/decision_curve/dca", data);
+
+// Model comparison
+export const runNestedLR       = (data: object) => api.post("/api/model_compare/nested_lr_test", data);
+export const runCompareModels  = (data: object) => api.post("/api/model_compare/compare_models", data);
+
 export const selectCases = (sessionId: string, conditions: object[]) =>
   api.post(`/api/sessions/${sessionId}/select_cases`, { conditions });
 export const clearCases  = (sessionId: string) =>

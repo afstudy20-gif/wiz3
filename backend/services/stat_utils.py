@@ -505,6 +505,62 @@ def matched_rank_biserial(w_stat: float, n: int) -> dict:
             "ci_high": round(ci_hi, 4), "magnitude": _es_magnitude("rank_biserial_r", r)}
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# 7. BOOTSTRAP CI & PERMUTATION TEST
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def bootstrap_ci(data: np.ndarray, statistic_fn, n_boot: int = 2000,
+                 ci: float = 0.95, seed: int = 42) -> dict:
+    """Bootstrap confidence interval for any statistic function.
+    statistic_fn takes an array and returns a scalar."""
+    rng = np.random.RandomState(seed)
+    n = len(data)
+    boot_stats = np.array([statistic_fn(data[rng.randint(0, n, n)]) for _ in range(n_boot)])
+    alpha = (1 - ci) / 2
+    lo = float(np.percentile(boot_stats, alpha * 100))
+    hi = float(np.percentile(boot_stats, (1 - alpha) * 100))
+    return {"estimate": float(statistic_fn(data)), "ci_low": round(lo, 4),
+            "ci_high": round(hi, 4), "n_boot": n_boot, "method": "percentile bootstrap"}
+
+
+def bootstrap_ci_two(x: np.ndarray, y: np.ndarray, statistic_fn, n_boot: int = 2000,
+                     ci: float = 0.95, seed: int = 42) -> dict:
+    """Bootstrap CI for a two-sample statistic (e.g. mean difference)."""
+    rng = np.random.RandomState(seed)
+    nx, ny = len(x), len(y)
+    boot_stats = []
+    for _ in range(n_boot):
+        bx = x[rng.randint(0, nx, nx)]
+        by = y[rng.randint(0, ny, ny)]
+        boot_stats.append(statistic_fn(bx, by))
+    boot_stats = np.array(boot_stats)
+    alpha = (1 - ci) / 2
+    lo = float(np.percentile(boot_stats, alpha * 100))
+    hi = float(np.percentile(boot_stats, (1 - alpha) * 100))
+    return {"estimate": float(statistic_fn(x, y)), "ci_low": round(lo, 4),
+            "ci_high": round(hi, 4), "n_boot": n_boot, "method": "percentile bootstrap"}
+
+
+def permutation_test(x: np.ndarray, y: np.ndarray, statistic_fn=None,
+                     n_perm: int = 5000, seed: int = 42) -> dict:
+    """Two-sample permutation test. Default statistic: difference of means."""
+    if statistic_fn is None:
+        statistic_fn = lambda a, b: float(a.mean() - b.mean())
+    rng = np.random.RandomState(seed)
+    observed = statistic_fn(x, y)
+    combined = np.concatenate([x, y])
+    nx = len(x)
+    count = 0
+    for _ in range(n_perm):
+        perm = rng.permutation(combined)
+        perm_stat = statistic_fn(perm[:nx], perm[nx:])
+        if abs(perm_stat) >= abs(observed):
+            count += 1
+    p = (count + 1) / (n_perm + 1)  # +1 to include observed
+    return {"observed_statistic": round(observed, 4), "p_permutation": round(p, 6),
+            "n_permutations": n_perm, "significant": p < 0.05}
+
+
 def cohens_h(p1: float, p2: float) -> dict:
     """Cohen's h for comparing two proportions."""
     h = 2 * (np.arcsin(np.sqrt(max(0, min(1, p1)))) - np.arcsin(np.sqrt(max(0, min(1, p2)))))
