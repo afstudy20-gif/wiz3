@@ -1033,8 +1033,25 @@ export default function DataTable() {
           {(missingCounts[ctxMenu.col] ?? 0) > 0 && (
             <>
               <div className="border-t border-gray-100 mt-0.5" />
+              <div className="px-3 py-1 text-[10px] text-amber-600 font-medium">Fill {missingCounts[ctxMenu.col]} blanks with:</div>
+              <button onClick={() => { fillBlanks(ctxMenu.col, "__mean__"); }}
+                className="w-full text-left px-3 py-1 text-xs text-gray-700 hover:bg-amber-50 flex items-center gap-2">
+                📊 Mean
+              </button>
+              <button onClick={() => { fillBlanks(ctxMenu.col, "__median__"); }}
+                className="w-full text-left px-3 py-1 text-xs text-gray-700 hover:bg-amber-50 flex items-center gap-2">
+                📊 Median
+              </button>
+              <button onClick={() => { fillBlanks(ctxMenu.col, "0"); }}
+                className="w-full text-left px-3 py-1 text-xs text-gray-700 hover:bg-amber-50 flex items-center gap-2">
+                0️⃣ Zero
+              </button>
+              <button onClick={() => { fillBlanks(ctxMenu.col, "__mice__"); }}
+                className="w-full text-left px-3 py-1 text-xs text-gray-700 hover:bg-amber-50 flex items-center gap-2">
+                🧬 MICE (multiple imputation)
+              </button>
               {fillMode === ctxMenu.col ? (
-                <div className="px-3 py-1.5 flex items-center gap-1">
+                <div className="px-3 py-1 flex items-center gap-1">
                   <input ref={fillRef} autoFocus
                     className="text-xs border border-gray-300 rounded px-1.5 py-0.5 w-20 focus:outline-none focus:border-indigo-400"
                     placeholder="value"
@@ -1049,9 +1066,9 @@ export default function DataTable() {
                     className="text-[10px] px-1.5 py-0.5 bg-indigo-600 text-white rounded hover:bg-indigo-700">Fill</button>
                 </div>
               ) : (
-                <button onClick={() => { setFillMode(ctxMenu.col); setFillVal("0"); }}
-                  className="w-full text-left px-3 py-1.5 text-xs text-amber-600 hover:bg-amber-50 flex items-center gap-2">
-                  📝 Fill blanks with...
+                <button onClick={() => { setFillMode(ctxMenu.col); setFillVal(""); }}
+                  className="w-full text-left px-3 py-1 text-xs text-gray-700 hover:bg-amber-50 flex items-center gap-2">
+                  ✏️ Custom value...
                 </button>
               )}
             </>

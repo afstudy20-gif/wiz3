@@ -877,25 +877,60 @@ def fill_blanks(session_id: str, req: FillBlanksRequest):
     col = df[req.column]
     n_before = int(col.isna().sum() + (col.astype(str).str.strip() == "").sum())
 
-    # Try numeric cast first
-    try:
-        fill_val = float(req.value)
-        if fill_val == int(fill_val):
-            fill_val = int(fill_val)
-    except (ValueError, TypeError):
-        fill_val = req.value
+    method_label = req.value
 
-    # Fill NaN and empty strings
-    df[req.column] = col.fillna(fill_val)
-    if col.dtype == object:
-        df.loc[df[req.column].astype(str).str.strip() == "", req.column] = fill_val
+    # Special fill strategies
+    if req.value == "__mean__":
+        num_col = pd.to_numeric(col, errors="coerce")
+        fill_val = float(num_col.mean())
+        method_label = f"mean ({fill_val:.2f})"
+        df[req.column] = num_col.fillna(fill_val)
+    elif req.value == "__median__":
+        num_col = pd.to_numeric(col, errors="coerce")
+        fill_val = float(num_col.median())
+        method_label = f"median ({fill_val:.2f})"
+        df[req.column] = num_col.fillna(fill_val)
+    elif req.value == "__mice__":
+        # MICE imputation for this single column using all other numeric columns
+        from sklearn.experimental import enable_iterative_imputer  # noqa
+        from sklearn.impute import IterativeImputer
+        num_cols = df.select_dtypes(include="number").columns.tolist()
+        if req.column not in num_cols:
+            num_col = pd.to_numeric(col, errors="coerce")
+            df[req.column] = num_col
+            num_cols = df.select_dtypes(include="number").columns.tolist()
+        if req.column in num_cols and len(num_cols) >= 2:
+            imp = IterativeImputer(max_iter=10, random_state=42)
+            imputed = imp.fit_transform(df[num_cols])
+            idx = num_cols.index(req.column)
+            df[req.column] = imputed[:, idx]
+            fill_val = "MICE"
+            method_label = "MICE (multiple imputation)"
+        else:
+            # Fallback to median if MICE not possible
+            num_col = pd.to_numeric(col, errors="coerce")
+            fill_val = float(num_col.median())
+            method_label = f"median fallback ({fill_val:.2f})"
+            df[req.column] = num_col.fillna(fill_val)
+    else:
+        # Custom value — try numeric cast first
+        try:
+            fill_val = float(req.value)
+            if fill_val == int(fill_val):
+                fill_val = int(fill_val)
+        except (ValueError, TypeError):
+            fill_val = req.value
+
+        df[req.column] = col.fillna(fill_val)
+        if col.dtype == object:
+            df.loc[df[req.column].astype(str).str.strip() == "", req.column] = fill_val
 
     n_after = int(df[req.column].isna().sum())
     n_filled = n_before - n_after
 
     store.save(session_id, df)
-    store.log_action(session_id, "fill_blanks", {"column": req.column, "value": req.value, "n_filled": n_filled})
-    return {"column": req.column, "fill_value": fill_val, "n_filled": n_filled}
+    store.log_action(session_id, "fill_blanks", {"column": req.column, "method": method_label, "n_filled": n_filled})
+    return {"column": req.column, "fill_value": method_label, "n_filled": n_filled}
 
 
 # ── 7. Delete rows ──────────────────────────────────────────────────────────
