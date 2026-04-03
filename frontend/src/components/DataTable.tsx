@@ -527,6 +527,25 @@ export default function DataTable() {
     } catch { /* ignore */ }
   };
 
+  const copyRow = (rowIdx: number) => {
+    if (!session) return;
+    setRowCtx(null);
+    const row = preview[rowIdx];
+    if (!row) return;
+    const headers = columns.map((c) => c.name);
+    const vals = headers.map((h) => String(row[h] ?? ""));
+    const tsv = headers.join("\t") + "\n" + vals.join("\t");
+    navigator.clipboard.writeText(tsv).catch(() => {});
+  };
+
+  const copyColumn = (colName: string) => {
+    if (!session) return;
+    setCtxMenu(null);
+    const vals = preview.map((row) => String(row[colName] ?? ""));
+    const tsv = colName + "\n" + vals.join("\n");
+    navigator.clipboard.writeText(tsv).catch(() => {});
+  };
+
   const addRow = async (position: number) => {
     if (!session) return;
     setRowCtx(null);
@@ -537,12 +556,12 @@ export default function DataTable() {
     } catch { /* ignore */ }
   };
 
-  const addColumn = async () => {
+  const addColumn = async (position?: number) => {
     if (!session) return;
     const name = prompt("New column name:");
     if (!name?.trim()) return;
     try {
-      await api.post(`/api/compute/${session.session_id}/add_column`, { name: name.trim() });
+      await api.post(`/api/compute/${session.session_id}/add_column`, { name: name.trim(), position: position ?? -1 });
       const res = await api.get(`/api/stats/${session.session_id}/refresh`);
       useStore.getState().setSession({ ...session, ...res.data }); bumpUndo();
     } catch (e: any) {
@@ -712,7 +731,7 @@ export default function DataTable() {
             className="text-xs px-2 py-1 rounded-lg border border-emerald-300 text-emerald-600 hover:bg-emerald-50 transition-colors">
             + Row
           </button>
-          <button onClick={addColumn}
+          <button onClick={() => addColumn()}
             className="text-xs px-2 py-1 rounded-lg border border-emerald-300 text-emerald-600 hover:bg-emerald-50 transition-colors">
             + Column
           </button>
@@ -1064,6 +1083,10 @@ export default function DataTable() {
             className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2">
             ✏️ Rename
           </button>
+          <button onClick={() => copyColumn(ctxMenu.col)}
+            className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+            📋 Copy column
+          </button>
           <button onClick={() => { cycleKind(ctxMenu.col); setCtxMenu(null); }}
             className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2">
             🏷️ Change type
@@ -1100,6 +1123,15 @@ export default function DataTable() {
           <button onClick={() => sendToEnd(ctxMenu.col)}
             className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2">
             ➡️ Send to end
+          </button>
+          <div className="border-t border-gray-100 mt-0.5" />
+          <button onClick={() => { const idx = columns.findIndex((c) => c.name === ctxMenu.col); setCtxMenu(null); addColumn(idx); }}
+            className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+            ⬅️ Insert column left
+          </button>
+          <button onClick={() => { const idx = columns.findIndex((c) => c.name === ctxMenu.col); setCtxMenu(null); addColumn(idx + 1); }}
+            className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+            ➡️ Insert column right
           </button>
           {(missingCounts[ctxMenu.col] ?? 0) > 0 && (
             <>
@@ -1158,6 +1190,11 @@ export default function DataTable() {
           className="fixed z-50 bg-white border border-gray-200 rounded-xl shadow-xl py-1 w-44"
           style={{ left: rowCtx.x, top: rowCtx.y }}>
           <div className="px-3 py-1.5 text-xs text-gray-400 font-medium border-b border-gray-100">Row {rowCtx.idx + 1}</div>
+          <button onClick={() => copyRow(rowCtx.idx)}
+            className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+            📋 Copy row
+          </button>
+          <div className="border-t border-gray-100 mt-0.5" />
           <button onClick={() => addRow(rowCtx.idx)}
             className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2">
             ⬆️ Insert row above

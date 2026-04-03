@@ -980,6 +980,7 @@ def add_row(session_id: str, req: AddRowRequest):
 class AddColumnRequest(BaseModel):
     name: str
     default_value: Optional[Any] = None  # None → all NaN
+    position: int = -1  # -1 = append at end, otherwise insert at this index
 
 
 @router.post("/{session_id}/add_column")
@@ -991,7 +992,10 @@ def add_column(session_id: str, req: AddColumnRequest):
     if name in df.columns:
         raise HTTPException(status_code=422, detail=f"Column '{name}' already exists")
     df = df.copy()
-    df[name] = req.default_value
+    if req.position >= 0 and req.position < len(df.columns):
+        df.insert(req.position, name, req.default_value)
+    else:
+        df[name] = req.default_value
     store.save(session_id, df)
     store.log_action(session_id, "add_column", {"name": name})
     return _build_result(df, name)
