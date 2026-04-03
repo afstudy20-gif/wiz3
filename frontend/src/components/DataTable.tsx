@@ -527,6 +527,29 @@ export default function DataTable() {
     } catch { /* ignore */ }
   };
 
+  const addRow = async (position: number) => {
+    if (!session) return;
+    setRowCtx(null);
+    try {
+      await api.post(`/api/compute/${session.session_id}/add_row`, { position });
+      const res = await api.get(`/api/stats/${session.session_id}/refresh`);
+      useStore.getState().setSession({ ...session, ...res.data }); bumpUndo();
+    } catch { /* ignore */ }
+  };
+
+  const addColumn = async () => {
+    if (!session) return;
+    const name = prompt("New column name:");
+    if (!name?.trim()) return;
+    try {
+      await api.post(`/api/compute/${session.session_id}/add_column`, { name: name.trim() });
+      const res = await api.get(`/api/stats/${session.session_id}/refresh`);
+      useStore.getState().setSession({ ...session, ...res.data }); bumpUndo();
+    } catch (e: any) {
+      alert(e?.response?.data?.detail ?? "Failed to add column");
+    }
+  };
+
   const deleteRow = async (rowIdx: number) => {
     if (!session) return;
 
@@ -684,6 +707,18 @@ export default function DataTable() {
         </p>
 
         <div className="flex items-center gap-2">
+          {/* Add Row / Add Column */}
+          <button onClick={() => addRow(-1)}
+            className="text-xs px-2 py-1 rounded-lg border border-emerald-300 text-emerald-600 hover:bg-emerald-50 transition-colors">
+            + Row
+          </button>
+          <button onClick={addColumn}
+            className="text-xs px-2 py-1 rounded-lg border border-emerald-300 text-emerald-600 hover:bg-emerald-50 transition-colors">
+            + Column
+          </button>
+
+          <div className="w-px h-5 bg-gray-200" />
+
           {/* Undo / Redo */}
           <button onClick={undo} disabled={undoLen === 0}
             title="Undo (Ctrl+Z)"
@@ -1123,6 +1158,15 @@ export default function DataTable() {
           className="fixed z-50 bg-white border border-gray-200 rounded-xl shadow-xl py-1 w-44"
           style={{ left: rowCtx.x, top: rowCtx.y }}>
           <div className="px-3 py-1.5 text-xs text-gray-400 font-medium border-b border-gray-100">Row {rowCtx.idx + 1}</div>
+          <button onClick={() => addRow(rowCtx.idx)}
+            className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+            ⬆️ Insert row above
+          </button>
+          <button onClick={() => addRow(rowCtx.idx + 1)}
+            className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+            ⬇️ Insert row below
+          </button>
+          <div className="border-t border-gray-100 mt-0.5" />
           <button onClick={() => deleteRow(rowCtx.idx)}
             className="w-full text-left px-3 py-1.5 text-xs text-red-500 hover:bg-red-50 flex items-center gap-2">
             🗑️ Delete row

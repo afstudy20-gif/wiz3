@@ -953,7 +953,51 @@ def delete_rows(session_id: str, req: DeleteRowsRequest):
     return {"deleted": len(req.row_indices), "remaining_rows": len(df)}
 
 
-# ── 8. Rename column ────────────────────────────────────────────────────────
+# ── 8. Add row ─────────────────────────────────────────────────────────────
+
+class AddRowRequest(BaseModel):
+    position: int = -1  # -1 = append at end, otherwise insert at this index
+
+
+@router.post("/{session_id}/add_row")
+def add_row(session_id: str, req: AddRowRequest):
+    df = _get_df(session_id)
+    # New row with all NaN/None values
+    new_row = pd.DataFrame([{col: None for col in df.columns}])
+    if req.position < 0 or req.position >= len(df):
+        df = pd.concat([df, new_row], ignore_index=True)
+    else:
+        top = df.iloc[:req.position]
+        bottom = df.iloc[req.position:]
+        df = pd.concat([top, new_row, bottom], ignore_index=True)
+    store.save(session_id, df)
+    store.log_action(session_id, "add_row", {"position": req.position})
+    return {"rows": len(df), "position": req.position}
+
+
+# ── 9. Add column ──────────────────────────────────────────────────────────
+
+class AddColumnRequest(BaseModel):
+    name: str
+    default_value: Optional[Any] = None  # None → all NaN
+
+
+@router.post("/{session_id}/add_column")
+def add_column(session_id: str, req: AddColumnRequest):
+    df = _get_df(session_id)
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Column name cannot be empty")
+    if name in df.columns:
+        raise HTTPException(status_code=422, detail=f"Column '{name}' already exists")
+    df = df.copy()
+    df[name] = req.default_value
+    store.save(session_id, df)
+    store.log_action(session_id, "add_column", {"name": name})
+    return _build_result(df, name)
+
+
+# ── 10. Rename column ───────────────────────────────────────────────────────
 
 class RenameRequest(BaseModel):
     old_name: str
