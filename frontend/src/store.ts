@@ -94,6 +94,12 @@ interface AppState {
   panelCache: Record<string, any>;
   setPanelCache: (panel: string, data: any) => void;
   clearPanelCache: (panel: string) => void;
+  // Undo / Redo
+  undoStack: Session[];
+  redoStack: Session[];
+  pushUndo: () => void;  // call BEFORE mutating session
+  undo: () => void;
+  redo: () => void;
 }
 
 const loadTheme = (): PlotTheme => {
@@ -108,7 +114,7 @@ export const useStore = create<AppState>((set) => ({
   plotTheme: loadTheme(),
   table1Result: null,
   caseFilter: null,
-  setSession: (s) => set({ session: s, activeTab: "data", table1Result: null, caseFilter: null, panelCache: {} }),
+  setSession: (s) => set({ session: s, activeTab: "data", table1Result: null, caseFilter: null, panelCache: {}, undoStack: [], redoStack: [] }),
   setActiveTab: (t) => set({ activeTab: t }),
   setCaseFilter: (f) => set({ caseFilter: f }),
   toggleGrid: () => set((state) => {
@@ -121,7 +127,7 @@ export const useStore = create<AppState>((set) => ({
     localStorage.setItem("plotTheme", JSON.stringify(next));
     return { plotTheme: next };
   }),
-  clearSession: () => set({ session: null, activeTab: "data", table1Result: null, caseFilter: null, panelCache: {} }),
+  clearSession: () => set({ session: null, activeTab: "data", table1Result: null, caseFilter: null, panelCache: {}, undoStack: [], redoStack: [] }),
   updateColumnKind: (name, kind) =>
     set((state) => {
       if (!state.session) return state;
@@ -182,5 +188,28 @@ export const useStore = create<AppState>((set) => ({
     const next = { ...state.panelCache };
     delete next[panel];
     return { panelCache: next };
+  }),
+  // Undo / Redo — max 30 steps
+  undoStack: [],
+  redoStack: [],
+  pushUndo: () => set((state) => {
+    if (!state.session) return state;
+    const snap = JSON.parse(JSON.stringify(state.session));
+    const stack = [...state.undoStack, snap].slice(-30);
+    return { undoStack: stack, redoStack: [] };
+  }),
+  undo: () => set((state) => {
+    if (state.undoStack.length === 0 || !state.session) return state;
+    const stack = [...state.undoStack];
+    const prev = stack.pop()!;
+    const redoSnap = JSON.parse(JSON.stringify(state.session));
+    return { session: prev, undoStack: stack, redoStack: [...state.redoStack, redoSnap].slice(-30) };
+  }),
+  redo: () => set((state) => {
+    if (state.redoStack.length === 0 || !state.session) return state;
+    const stack = [...state.redoStack];
+    const next = stack.pop()!;
+    const undoSnap = JSON.parse(JSON.stringify(state.session));
+    return { session: next, undoStack: [...state.undoStack, undoSnap].slice(-30), redoStack: stack };
   }),
 }));

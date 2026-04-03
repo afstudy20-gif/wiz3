@@ -357,6 +357,11 @@ export default function DataTable() {
   const reorderColumns   = useStore((s) => s.reorderColumns);
   const caseFilter       = useStore((s) => s.caseFilter);
   const setCaseFilter    = useStore((s) => s.setCaseFilter);
+  const pushUndo         = useStore((s) => s.pushUndo);
+  const undo             = useStore((s) => s.undo);
+  const redo             = useStore((s) => s.redo);
+  const undoLen          = useStore((s) => s.undoStack.length);
+  const redoLen          = useStore((s) => s.redoStack.length);
 
   const [sortCol,     setSortCol]     = useState<string | null>(null);
   const [sortDir,     setSortDir]     = useState<SortDir>("asc");
@@ -402,6 +407,21 @@ export default function DataTable() {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [showSaveMenu]);
+
+  // Ctrl+Z / Ctrl+Y (or Cmd+Z / Cmd+Shift+Z on Mac)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      // Don't capture when editing a cell or input
+      if (editCell || renameCol) return;
+      if (e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
+      if (e.key === "z" && e.shiftKey)  { e.preventDefault(); redo(); }
+      if (e.key === "y")                { e.preventDefault(); redo(); }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [undo, redo, editCell, renameCol]);
 
   useEffect(() => {
     if (editCell) setTimeout(() => inputRef.current?.focus(), 0);
@@ -491,6 +511,7 @@ export default function DataTable() {
 
   const deleteColumn = async (colName: string) => {
     if (!session) return;
+    pushUndo();
     setCtxMenu(null);
     try {
       await api.delete(`/api/compute/${session.session_id}/column/${encodeURIComponent(colName)}`);
@@ -504,6 +525,7 @@ export default function DataTable() {
 
   const deleteRow = async (rowIdx: number) => {
     if (!session) return;
+    pushUndo();
     setRowCtx(null);
     try {
       await api.post(`/api/compute/${session.session_id}/delete_rows`, { row_indices: [rowIdx] });
@@ -514,6 +536,7 @@ export default function DataTable() {
 
   const sendToEnd = (colName: string) => {
     if (!session) return;
+    pushUndo();
     setCtxMenu(null);
     const idx = session.columns.findIndex((c) => c.name === colName);
     if (idx < 0 || idx === session.columns.length - 1) return;
@@ -522,6 +545,7 @@ export default function DataTable() {
 
   const fillBlanks = async (colName: string, fillValue: string) => {
     if (!session || !fillValue.trim()) return;
+    pushUndo();
     setCtxMenu(null);
     try {
       await api.post(`/api/compute/${session.session_id}/fill_blanks`, {
@@ -543,6 +567,7 @@ export default function DataTable() {
     const newName = renameVal.trim();
     setRenameCol(null);
     if (!newName || newName === renameCol) return;
+    pushUndo();
     try {
       await renameColumn(session.session_id, renameCol, newName);
       // Update local state
@@ -582,6 +607,7 @@ export default function DataTable() {
 
   const commitEdit = async () => {
     if (!editCell || saving) return;
+    pushUndo();
     const { rowIdx, col } = editCell;
     setEditCell(null);
 
@@ -652,6 +678,18 @@ export default function DataTable() {
         </p>
 
         <div className="flex items-center gap-2">
+          {/* Undo / Redo */}
+          <button onClick={undo} disabled={undoLen === 0}
+            title="Undo (Ctrl+Z)"
+            className={`text-xs px-2 py-1 rounded-lg border transition-colors ${undoLen > 0 ? "text-gray-600 border-gray-300 hover:bg-gray-100" : "text-gray-300 border-gray-200 cursor-default"}`}>
+            ↩ Undo
+          </button>
+          <button onClick={redo} disabled={redoLen === 0}
+            title="Redo (Ctrl+Y)"
+            className={`text-xs px-2 py-1 rounded-lg border transition-colors ${redoLen > 0 ? "text-gray-600 border-gray-300 hover:bg-gray-100" : "text-gray-300 border-gray-200 cursor-default"}`}>
+            ↪ Redo
+          </button>
+
           {sortCol && (
             <button
               onClick={() => setSortCol(null)}
@@ -800,7 +838,7 @@ export default function DataTable() {
                     onDragLeave={() => { if (dropIdx === colIdx) setDropIdx(null); }}
                     onDrop={(e) => {
                       e.preventDefault();
-                      if (dragIdx !== null && dragIdx !== colIdx) reorderColumns(dragIdx, colIdx);
+                      if (dragIdx !== null && dragIdx !== colIdx) { pushUndo(); reorderColumns(dragIdx, colIdx); }
                       setDragIdx(null);
                       setDropIdx(null);
                     }}
