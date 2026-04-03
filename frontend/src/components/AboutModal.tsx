@@ -1,5 +1,17 @@
 import { X } from "lucide-react";
 
+const VERSION = "1.4.0";
+const BUILD = 81;
+
+const CHANGELOG = [
+  { ver: "1.4.0", date: "2026-04-03", notes: "Right-click context menu (rename, delete, fill blanks, send to end), row delete, XLSX export fix, persist results across tabs, variable rename" },
+  { ver: "1.3.0", date: "2026-04-02", notes: "Diagnostics (VIF, Cook's, Breusch-Pagan, White), model diagnostics (calibration, Brier, Hosmer-Lemeshow, Schoenfeld PH), DCA, model comparison, bootstrap CI, permutation tests" },
+  { ver: "1.2.0", date: "2026-04-01", notes: "Repeated measures (paired t-test, Wilcoxon SR, Friedman, RM ANOVA, mixed ANOVA), ANCOVA, two-way ANOVA, test guidance panels" },
+  { ver: "1.1.0", date: "2026-03-28", notes: "Effect sizes with CI for all tests, post-hoc testing (Tukey, Games-Howell, Dunn), violin plots, global palette theme, PlotExporter on all charts" },
+  { ver: "1.0.0", date: "2026-03-24", notes: "PSM, power analysis redesign, normality fixes (Lilliefors, CLT bypass), DeLong CI, LMM guards, binary auto-detection, tertile/quartile, clinical calculators" },
+  { ver: "0.9.0", date: "2026-03-19", notes: "Initial release: data import (CSV/Excel/SPSS/SAS/Stata), descriptive stats, hypothesis testing, correlation, ROC, regression models, Table 1, compute engine" },
+];
+
 const ABOUT_SECTIONS = [
   {
     title: "Hypothesis Testing",
@@ -132,7 +144,11 @@ export default function AboutModal({ onClose }: { onClose: () => void }) {
           <div className="flex items-center gap-3">
             <img src="/logo.png" alt="uSTAT" className="w-10 h-10 object-contain" />
             <div>
-              <h2 className="text-lg font-bold text-gray-900">uSTAT</h2>
+              <div className="flex items-baseline gap-2">
+                <h2 className="text-lg font-bold text-gray-900">uSTAT</h2>
+                <span className="text-xs font-mono text-indigo-500 bg-indigo-50 px-1.5 py-0.5 rounded">v{VERSION}</span>
+                <span className="text-[10px] text-gray-400">build {BUILD}</span>
+              </div>
               <p className="text-xs text-gray-400">Statistical Analysis Platform</p>
             </div>
           </div>
@@ -179,6 +195,25 @@ export default function AboutModal({ onClose }: { onClose: () => void }) {
               </div>
             </div>
           ))}
+
+          {/* Changelog */}
+          <div>
+            <h3 className="text-xs font-bold text-gray-900 uppercase tracking-wider mb-2 border-b border-gray-100 pb-1">
+              Changelog
+            </h3>
+            <div className="space-y-2">
+              {CHANGELOG.map((entry, i) => (
+                <div key={entry.ver} className={`flex gap-3 text-xs ${i === 0 ? "text-gray-800" : "text-gray-500"}`}>
+                  <div className="flex-shrink-0 w-24 flex items-start gap-1.5">
+                    <span className={`font-mono font-semibold ${i === 0 ? "text-indigo-600" : ""}`}>v{entry.ver}</span>
+                    {i === 0 && <span className="text-[8px] bg-green-100 text-green-700 px-1 rounded font-semibold">NEW</span>}
+                  </div>
+                  <span className="flex-shrink-0 text-gray-400 w-20">{entry.date}</span>
+                  <span className="leading-relaxed">{entry.notes}</span>
+                </div>
+              ))}
+            </div>
+          </div>
 
           <div className="text-[10px] text-gray-400 pt-2 border-t border-gray-100">
             All computations run server-side via FastAPI. Data never leaves your machine.
