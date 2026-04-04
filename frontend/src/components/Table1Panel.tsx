@@ -549,9 +549,143 @@ export default function Table1Panel() {
               <p>Categorical: Chi-square · Fisher's exact when any expected cell &lt; 5.</p>
               <p className="text-indigo-600">*** p&lt;0.001 · ** p&lt;0.01 · * p&lt;0.05 · ns = not significant</p>
             </div>
+
+            {/* ── Format for Journal ── */}
+            <JournalFormatSection result={result} />
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Journal Format Section (AMA style)
+// ═════════════════════════════════════════════════════════════════════════════
+
+function JournalFormatSection({ result }: { result: any }) {
+  const [journalData, setJournalData] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [boldP, setBoldP] = useState(true);
+
+  const formatForJournal = async () => {
+    setLoading(true); setError(null);
+    try {
+      const res = await api.post("/api/pub_tables/format", {
+        table1_result: result,
+        options: { bold_significant_p: boldP, table_number: 1 },
+      });
+      setJournalData(res.data);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail ?? "Format failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const exportJournal = async (fmt: "xlsx" | "docx") => {
+    if (!journalData) return;
+    try {
+      const res = await api.post("/api/pub_tables/export", {
+        formatted_table: journalData,
+        format: fmt,
+      }, { responseType: "blob" });
+      const blob = new Blob([res.data]);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Table_1_AMA.${fmt}`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 100);
+    } catch { /* ignore */ }
+  };
+
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="flex items-center gap-3">
+        <button onClick={formatForJournal} disabled={loading}
+          className="btn-primary text-sm px-4 py-1.5">
+          {loading ? "Formatting…" : "Format for Journal (AMA)"}
+        </button>
+        <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer">
+          <input type="checkbox" checked={boldP} onChange={(e) => setBoldP(e.target.checked)}
+            className="accent-indigo-500" />
+          Bold significant p-values
+        </label>
+      </div>
+
+      {error && <p className="text-red-500 text-xs">{error}</p>}
+
+      {journalData && (
+        <div className="space-y-3">
+          {/* Validation status */}
+          <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold ${
+            journalData.validation?.status === "READY FOR SUBMISSION"
+              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+              : "bg-amber-50 text-amber-700 border border-amber-200"
+          }`}>
+            {journalData.validation?.status === "READY FOR SUBMISSION" ? "✓" : "⚠"}
+            {" "}{journalData.validation?.status}
+          </div>
+
+          {/* Validation details */}
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(journalData.validation || {}).filter(([k]) => k !== "status").map(([k, v]) => (
+              <span key={k} className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                v === "PASS" ? "bg-emerald-50 text-emerald-600 border-emerald-200" :
+                v === "WARN" ? "bg-amber-50 text-amber-600 border-amber-200" :
+                "bg-red-50 text-red-600 border-red-200"
+              }`}>
+                {k.replace(/_/g, " ")}: {v as string}
+              </span>
+            ))}
+          </div>
+
+          {/* Export buttons */}
+          <div className="flex items-center gap-2">
+            <button onClick={() => exportJournal("docx")}
+              className="text-xs px-3 py-1.5 rounded-lg border border-indigo-300 text-indigo-600 hover:bg-indigo-50 transition-colors font-medium">
+              Download Word (.docx)
+            </button>
+            <button onClick={() => exportJournal("xlsx")}
+              className="text-xs px-3 py-1.5 rounded-lg border border-emerald-300 text-emerald-600 hover:bg-emerald-50 transition-colors font-medium">
+              Download Excel (.xlsx)
+            </button>
+            <button onClick={() => {
+              if (journalData.html) navigator.clipboard.writeText(journalData.html);
+            }}
+              className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors">
+              Copy HTML
+            </button>
+          </div>
+
+          {/* Abbreviations */}
+          {journalData.abbreviations && Object.keys(journalData.abbreviations).length > 0 && (
+            <div className="text-[10px] text-gray-500">
+              <span className="font-semibold text-gray-600">Detected abbreviations: </span>
+              {Object.entries(journalData.abbreviations).map(([k, v]) => (
+                <span key={k} className="mr-2">{k} = {v as string};</span>
+              ))}
+            </div>
+          )}
+
+          {/* Journal-formatted HTML preview */}
+          <div className="border border-gray-200 rounded-xl overflow-hidden bg-white p-4">
+            <div dangerouslySetInnerHTML={{ __html: journalData.html }} />
+          </div>
+
+          {/* Footnotes */}
+          {journalData.footnotes?.length > 0 && (
+            <div className="text-[10px] text-gray-400 italic space-y-0.5 px-1">
+              {journalData.footnotes.map((fn: string, i: number) => (
+                <p key={i}>{fn}</p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
