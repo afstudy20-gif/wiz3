@@ -115,12 +115,15 @@ def _find_abbreviations(text: str) -> dict:
 
 
 def _fmt_p(p) -> str:
-    if p is None:
-        return ""
+    if p is None or p == "" or p == "N/A":
+        return str(p) if p else ""
+    s = str(p).strip()
+    if s.startswith("<"):
+        return s  # already formatted like "<0.001"
     try:
-        pv = float(p)
+        pv = float(s)
     except (ValueError, TypeError):
-        return str(p)
+        return s
     if pv < 0.001:
         return "<0.001"
     if pv < 0.01:
@@ -151,7 +154,7 @@ def format_table1_for_journal(result: dict, options: dict = None) -> dict:
     group_labels = result.get("group_labels", [])
     group_ns = result.get("group_ns", {})
     total_n = result.get("total_n", 0)
-    has_groups = len(group_labels) > 1
+    has_groups = len(group_labels) >= 2
 
     # Build column headers
     columns = ["Variable"]
@@ -174,41 +177,43 @@ def format_table1_for_journal(result: dict, options: dict = None) -> dict:
         all_text += " " + var_name
 
         if row["type"] == "numeric":
+            # stat_rows: [{label, overall, group_stats: {group_label: value}}]
             stat_rows = row.get("stat_rows", [])
             for si, sr in enumerate(stat_rows):
-                label = var_name if si == 0 else ""
-                stat_label = sr.get("stat", "")
+                stat_label = sr.get("label", "")
 
-                # Add unit to first stat row
                 if si == 0:
+                    # Build label: "Variable, unit, stat_format"
+                    label = var_name
                     unit = _detect_unit(var_name)
                     if unit:
                         label = f"{var_name}, {unit}"
-
-                    # Add stat suffix
                     if stat_label:
                         label += f", {stat_label}"
+                else:
+                    label = f"\u2003{stat_label}" if stat_label else ""
 
+                # Extract values from group_stats dict
                 values = []
                 if has_groups:
+                    grp = sr.get("group_stats", {})
                     for g in group_labels:
-                        values.append(sr.get("groups", {}).get(g, ""))
+                        values.append(str(grp.get(g, "")))
                 else:
-                    values.append(sr.get("overall", ""))
+                    values.append(str(sr.get("overall", "")))
 
                 p_val = ""
                 test_sym = ""
-                test_name = ""
                 if si == 0 and has_groups:
-                    p_val = _fmt_p(row.get("p"))
-                    test_name = row.get("test", "")
+                    p_val = _fmt_p(row.get("p_value"))
+                    test_name = row.get("test", "") or ""
                     test_sym = _assign_test_symbol(test_name)
                     if test_sym:
                         used_tests.add(test_sym)
 
                 formatted_rows.append({
                     "label": label,
-                    "values": [str(v) for v in values],
+                    "values": values,
                     "p_value": p_val,
                     "test_symbol": test_sym,
                     "indent": 1 if si > 0 else 0,
@@ -216,34 +221,33 @@ def format_table1_for_journal(result: dict, options: dict = None) -> dict:
                 })
 
         elif row["type"] == "categorical":
+            # p-value and test for header row
+            p_val_cat = _fmt_p(row.get("p_value")) if has_groups else ""
+            test_name_cat = row.get("test", "") or ""
+            test_sym_cat = _assign_test_symbol(test_name_cat) if has_groups else ""
+            if test_sym_cat:
+                used_tests.add(test_sym_cat)
+
             # Header row (variable name)
             formatted_rows.append({
                 "label": var_name + ", n (%)",
                 "values": [""] * (len(group_labels) if has_groups else 1),
-                "p_value": _fmt_p(row.get("p")) if has_groups else "",
-                "test_symbol": _assign_test_symbol(row.get("test", "")) if has_groups else "",
+                "p_value": p_val_cat,
+                "test_symbol": test_sym_cat,
                 "indent": 0,
                 "bold": True,
             })
-            if has_groups and row.get("test"):
-                sym = _assign_test_symbol(row["test"])
-                if sym:
-                    used_tests.add(sym)
 
-            # Category sub-rows
-            for cat in row.get("categories", []):
-                cat_label = str(cat.get("value", ""))
+            # Category sub-rows from sub_rows: [{category, overall, group_stats: {gl: "n (pct%)"}}]
+            for cat in row.get("sub_rows", []):
+                cat_label = str(cat.get("category", ""))
                 values = []
                 if has_groups:
+                    grp = cat.get("group_stats", {})
                     for g in group_labels:
-                        gd = cat.get("groups", {}).get(g, {})
-                        n = gd.get("n", 0)
-                        pct = gd.get("pct", 0)
-                        values.append(f"{n} ({pct:.1f}%)")
+                        values.append(str(grp.get(g, "")))
                 else:
-                    n = cat.get("n", 0)
-                    pct = cat.get("pct", 0)
-                    values.append(f"{n} ({pct:.1f}%)")
+                    values.append(str(cat.get("overall", "")))
 
                 formatted_rows.append({
                     "label": cat_label,
