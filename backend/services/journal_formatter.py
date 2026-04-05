@@ -87,6 +87,49 @@ _UNIT_PATTERNS = {
 # HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Binary value transcoding — converts 0/1 to meaningful labels
+_VALUE_LABELS = {
+    "sex":       {"0": "Female", "1": "Male", "0.0": "Female", "1.0": "Male"},
+    "gender":    {"0": "Female", "1": "Male", "0.0": "Female", "1.0": "Male"},
+    "smoking":   {"0": "No", "1": "Yes", "0.0": "No", "1.0": "Yes"},
+    "smoker":    {"0": "No", "1": "Yes", "0.0": "No", "1.0": "Yes"},
+    "mortality": {"0": "Alive", "1": "Dead", "0.0": "Alive", "1.0": "Dead"},
+    "exitus":    {"0": "Alive", "1": "Dead", "0.0": "Alive", "1.0": "Dead"},
+    "death":     {"0": "No", "1": "Yes", "0.0": "No", "1.0": "Yes"},
+}
+
+# Variables where we should HIDE the "0" row (show only "Yes"/positive row)
+_HIDE_ZERO_VARS = {
+    "dm", "ht", "hl", "af", "copd", "ckd", "hf", "cad", "pad",
+    "hypertension", "diabetes", "dyslipidemia", "hyperlipidemia",
+    "smoking", "smoker", "acei", "arb", "bb", "ccb", "asa", "statin",
+    "clop", "tica", "oak", "revasc", "comp", "mvi",
+    "inhospital", "onemonth", "sixmonth", "oneyear", "twoyear",
+}
+
+
+def _transcode_category(var_name: str, cat_value: str) -> str:
+    """Convert raw category value to a meaningful label."""
+    var_lower = var_name.lower().strip()
+    # Check specific variable labels
+    for key, mapping in _VALUE_LABELS.items():
+        if key in var_lower:
+            if cat_value in mapping:
+                return mapping[cat_value]
+    # Generic 0/1 → No/Yes
+    if cat_value in ("0", "0.0"):
+        return "No"
+    if cat_value in ("1", "1.0"):
+        return "Yes"
+    return cat_value
+
+
+def _should_hide_zero(var_name: str) -> bool:
+    """Check if this variable should hide the '0' category row."""
+    var_lower = var_name.lower().strip()
+    return any(kw == var_lower or kw in var_lower for kw in _HIDE_ZERO_VARS)
+
+
 def _detect_unit(var_name: str) -> Optional[str]:
     name_lower = var_name.lower()
     for pattern, unit in _UNIT_PATTERNS.items():
@@ -156,12 +199,35 @@ def format_table1_for_journal(result: dict, options: dict = None) -> dict:
     total_n = result.get("total_n", 0)
     has_groups = len(group_labels) >= 2
 
+    # Transcode group labels (e.g. EXITUS: "0" → "Survived", "1" → "Deceased")
+    _GROUP_LABELS = {
+        "exitus":    {"0": "Survived", "1": "Deceased", "0.0": "Survived", "1.0": "Deceased"},
+        "mortality": {"0": "Survived", "1": "Deceased", "0.0": "Survived", "1.0": "Deceased"},
+        "death":     {"0": "Survived", "1": "Deceased", "0.0": "Survived", "1.0": "Deceased"},
+        "sex":       {"0": "Female", "1": "Male", "0.0": "Female", "1.0": "Male"},
+        "gender":    {"0": "Female", "1": "Male", "0.0": "Female", "1.0": "Male"},
+        "revasc":    {"0": "No Revascularization", "1": "Revascularization", "0.0": "No Revascularization", "1.0": "Revascularization"},
+        "comp":      {"0": "No Complication", "1": "Complication", "0.0": "No Complication", "1.0": "Complication"},
+    }
+
+    def _display_group(g: str) -> str:
+        gc_lower = group_col.lower().strip() if group_col else ""
+        for key, mapping in _GROUP_LABELS.items():
+            if key in gc_lower or gc_lower in key:
+                if g in mapping:
+                    return mapping[g]
+        # If group is just "0" or "1", prefix with group_col name
+        if g in ("0", "1", "0.0", "1.0") and group_col:
+            return f"{group_col}={g}"
+        return g
+
     # Build column headers
     columns = ["Variable"]
     if has_groups:
         for g in group_labels:
             n = group_ns.get(g, "")
-            columns.append(f"{g} (n={n})")
+            display = _display_group(g)
+            columns.append(f"{display} (n={n})")
     else:
         columns.append(f"Overall (n={total_n})")
     if has_groups:
@@ -228,35 +294,69 @@ def format_table1_for_journal(result: dict, options: dict = None) -> dict:
             if test_sym_cat:
                 used_tests.add(test_sym_cat)
 
-            # Header row (variable name)
-            formatted_rows.append({
-                "label": var_name + ", n (%)",
-                "values": [""] * (len(group_labels) if has_groups else 1),
-                "p_value": p_val_cat,
-                "test_symbol": test_sym_cat,
-                "indent": 0,
-                "bold": True,
-            })
+            sub_rows = row.get("sub_rows", [])
+            hide_zero = _should_hide_zero(var_name)
+            is_binary = len(sub_rows) == 2
 
-            # Category sub-rows from sub_rows: [{category, overall, group_stats: {gl: "n (pct%)"}}]
-            for cat in row.get("sub_rows", []):
-                cat_label = str(cat.get("category", ""))
+            # For binary variables that should hide zero: show as single row (just the "1"/Yes count)
+            if is_binary and hide_zero:
+                # Find the "1" row (positive case)
+                pos_row = None
+                for cat in sub_rows:
+                    raw_cat = str(cat.get("category", ""))
+                    if raw_cat in ("1", "1.0", "Yes", "yes", "Male", "male"):
+                        pos_row = cat
+                        break
+                if not pos_row:
+                    pos_row = sub_rows[-1]  # last row as fallback
+
                 values = []
                 if has_groups:
-                    grp = cat.get("group_stats", {})
+                    grp = pos_row.get("group_stats", {})
                     for g in group_labels:
                         values.append(str(grp.get(g, "")))
                 else:
-                    values.append(str(cat.get("overall", "")))
+                    values.append(str(pos_row.get("overall", "")))
 
                 formatted_rows.append({
-                    "label": cat_label,
+                    "label": var_name + ", n (%)",
                     "values": values,
-                    "p_value": "",
-                    "test_symbol": "",
-                    "indent": 1,
+                    "p_value": p_val_cat,
+                    "test_symbol": test_sym_cat,
+                    "indent": 0,
                     "bold": False,
                 })
+            else:
+                # Multi-category or SEX-like: show header + sub-rows with transcoded labels
+                formatted_rows.append({
+                    "label": var_name + ", n (%)",
+                    "values": [""] * (len(group_labels) if has_groups else 1),
+                    "p_value": p_val_cat,
+                    "test_symbol": test_sym_cat,
+                    "indent": 0,
+                    "bold": True,
+                })
+
+                for cat in sub_rows:
+                    raw_cat = str(cat.get("category", ""))
+                    cat_label = _transcode_category(var_name, raw_cat)
+
+                    values = []
+                    if has_groups:
+                        grp = cat.get("group_stats", {})
+                        for g in group_labels:
+                            values.append(str(grp.get(g, "")))
+                    else:
+                        values.append(str(cat.get("overall", "")))
+
+                    formatted_rows.append({
+                        "label": cat_label,
+                        "values": values,
+                        "p_value": "",
+                        "test_symbol": "",
+                        "indent": 1,
+                        "bold": False,
+                    })
 
     # Detect abbreviations
     abbreviations = _find_abbreviations(all_text)
