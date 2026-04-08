@@ -441,12 +441,29 @@ export default function DataTable() {
       if (e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
       if (e.key === "z" && e.shiftKey)  { e.preventDefault(); redo(); }
       if (e.key === "y")                { e.preventDefault(); redo(); }
+      // Ctrl+C — copy selected cells
+      if (e.key === "c" && selectedCells.size > 0) {
+        e.preventDefault();
+        copyCells();
+        return;
+      }
       // Ctrl+V — paste from clipboard
       if (e.key === "v" && session) {
         e.preventDefault();
         try {
           const text = await navigator.clipboard.readText();
           if (!text.trim()) return;
+
+          // If we have a cell selection anchor, paste cells at that position
+          if (selAnchor) {
+            await pasteCellsAt(selAnchor.row, selAnchor.col, text);
+            setSelectedCells(new Set());
+            setPasteMsg("Cells pasted");
+            setTimeout(() => setPasteMsg(null), 3000);
+            return;
+          }
+
+          // Otherwise append rows (old behavior)
           const res = await api.post(`/api/compute/${session.session_id}/paste`, {
             tsv: text, has_header: true, mode: "append",
           });
@@ -671,6 +688,50 @@ export default function DataTable() {
     } catch { /* ignore */ }
   };
 
+  // ── Clipboard for cell copy/paste ──────────────────────────────────────────
+  const [copiedCells, setCopiedCells] = useState<{ tsv: string; rows: number; cols: number } | null>(null);
+
+  const copyCells = () => {
+    if (!session || selectedCells.size === 0) return;
+    const cells = Array.from(selectedCells).map((k) => {
+      const [r, ...cParts] = k.split(":");
+      return { row: Number(r), col: cParts.join(":") };
+    });
+    const rows = [...new Set(cells.map((c) => c.row))].sort((a, b) => a - b);
+    const cols = [...new Set(cells.map((c) => c.col))];
+    const colOrder = columns.map((c) => c.name);
+    cols.sort((a, b) => colOrder.indexOf(a) - colOrder.indexOf(b));
+    const tsv = rows.map((r) =>
+      cols.map((c) => {
+        const val = preview[r]?.[c];
+        return val === null || val === undefined ? "" : String(val);
+      }).join("\t")
+    ).join("\n");
+    setCopiedCells({ tsv, rows: rows.length, cols: cols.length });
+    navigator.clipboard.writeText(tsv).catch(() => {});
+  };
+
+  const pasteCellsAt = async (startRow: number, startCol: string, tsv: string) => {
+    if (!session) return;
+    try {
+      await api.post(`/api/compute/${session.session_id}/paste_cells`, {
+        start_row: startRow, start_col: startCol, tsv,
+      });
+      const res = await api.get(`/api/stats/${session.session_id}/refresh`);
+      useStore.getState().setSession({ ...session, ...res.data }); bumpUndo();
+    } catch { /* ignore */ }
+  };
+
+  const duplicateColumn = async (colName: string) => {
+    if (!session) return;
+    setCtxMenu(null);
+    try {
+      await api.post(`/api/compute/${session.session_id}/duplicate_column`, { column: colName });
+      const res = await api.get(`/api/stats/${session.session_id}/refresh`);
+      useStore.getState().setSession({ ...session, ...res.data }); bumpUndo();
+    } catch { /* ignore */ }
+  };
+
   const sendToEnd = (colName: string) => {
     if (!session) return;
 
@@ -819,6 +880,11 @@ export default function DataTable() {
             <span className="ml-3 text-blue-600 text-xs font-medium">
               {selectedCells.size} cells selected
               <button onClick={() => setSelectedCells(new Set())} className="ml-1 text-blue-400 hover:text-blue-600">✕</button>
+            </span>
+          )}
+          {copiedCells && (
+            <span className="ml-2 text-green-600 text-xs">
+              {copiedCells.rows}x{copiedCells.cols} copied
             </span>
           )}
         </p>
@@ -1253,6 +1319,10 @@ export default function DataTable() {
             className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2">
             ➡️ Insert column right
           </button>
+          <button onClick={() => duplicateColumn(ctxMenu.col)}
+            className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+            📑 Duplicate column
+          </button>
           {(missingCounts[ctxMenu.col] ?? 0) > 0 && (
             <>
               <div className="border-t border-gray-100 mt-0.5" />
@@ -1318,29 +1388,19 @@ export default function DataTable() {
             className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2">
             🧹 Clear {selectedCells.size > 1 ? `${selectedCells.size} cells` : "cell"}
           </button>
-          <button onClick={() => {
-            // Copy selected cells as TSV
-            if (!session) return;
-            const cells = Array.from(selectedCells).map((k) => {
-              const [r, ...cParts] = k.split(":");
-              return { row: Number(r), col: cParts.join(":") };
-            });
-            const rows = [...new Set(cells.map((c) => c.row))].sort((a, b) => a - b);
-            const cols = [...new Set(cells.map((c) => c.col))];
-            // Order cols by column order
-            const colOrder = columns.map((c) => c.name);
-            cols.sort((a, b) => colOrder.indexOf(a) - colOrder.indexOf(b));
-            const tsv = rows.map((r) =>
-              cols.map((c) => {
-                const val = preview[r]?.[c];
-                return val === null || val === undefined ? "" : String(val);
-              }).join("\t")
-            ).join("\n");
-            navigator.clipboard.writeText(tsv).catch(() => {});
-            setCellCtx(null);
-          }}
+          <button onClick={() => { copyCells(); setCellCtx(null); }}
             className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2">
             📋 Copy {selectedCells.size > 1 ? `${selectedCells.size} cells` : "cell"}
+          </button>
+          <button onClick={async () => {
+            setCellCtx(null);
+            try {
+              const text = await navigator.clipboard.readText();
+              if (text.trim()) await pasteCellsAt(cellCtx.row, cellCtx.col, text);
+            } catch { /* clipboard denied */ }
+          }}
+            className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+            📌 Paste here
           </button>
         </div>
       )}

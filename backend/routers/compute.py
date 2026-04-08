@@ -1075,6 +1075,90 @@ def rename_column(session_id: str, req: RenameRequest):
     return {"old_name": req.old_name, "new_name": new}
 
 
+# ── 12. Duplicate column ──────────────────────────────────────────────────────
+
+class DuplicateColumnRequest(BaseModel):
+    column: str
+
+
+@router.post("/{session_id}/duplicate_column")
+def duplicate_column(session_id: str, req: DuplicateColumnRequest):
+    df = _get_df(session_id)
+    col = req.column
+    if col not in df.columns:
+        raise HTTPException(status_code=404, detail=f"Column '{col}' not found")
+
+    # Generate unique name
+    base = f"{col}_copy"
+    new_name = base
+    i = 2
+    while new_name in df.columns:
+        new_name = f"{base}_{i}"
+        i += 1
+
+    # Insert right after the original column
+    pos = list(df.columns).index(col) + 1
+    df = df.copy()
+    df.insert(pos, new_name, df[col].values.copy())
+    store.save(session_id, df)
+    store.log_action(session_id, "duplicate_column", {"source": col, "new": new_name})
+    return _build_result(df, new_name)
+
+
+# ── 13. Paste cells (copy-paste within the grid) ─────────────────────────────
+
+class PasteCellsRequest(BaseModel):
+    start_row: int
+    start_col: str
+    tsv: str  # tab-separated values grid
+
+
+@router.post("/{session_id}/paste_cells")
+def paste_cells(session_id: str, req: PasteCellsRequest):
+    """Paste a TSV grid of values starting at a given cell position."""
+    df = _get_df(session_id)
+    if req.start_col not in df.columns:
+        raise HTTPException(status_code=400, detail=f"Column '{req.start_col}' not found")
+
+    lines = req.tsv.strip().split("\n")
+    if not lines:
+        return {"pasted": 0}
+
+    col_list = list(df.columns)
+    start_ci = col_list.index(req.start_col)
+    df = df.copy()
+    pasted = 0
+
+    for dr, line in enumerate(lines):
+        ri = req.start_row + dr
+        if ri >= len(df):
+            break
+        vals = line.split("\t")
+        for dc, val in enumerate(vals):
+            ci = start_ci + dc
+            if ci >= len(col_list):
+                break
+            col_name = col_list[ci]
+            # Coerce value
+            v: Any = val.strip()
+            if v == "" or v.lower() == "null":
+                v = np.nan
+            else:
+                col_dtype = df[col_name].dtype
+                try:
+                    if col_dtype.kind in ("i", "u"):
+                        v = int(float(v))
+                    elif col_dtype.kind == "f":
+                        v = float(v)
+                except (ValueError, TypeError):
+                    pass
+            df.at[ri, col_name] = v
+            pasted += 1
+
+    store.save(session_id, df)
+    return {"pasted": pasted}
+
+
 # ── 7. List unique values (for sex mapping UI) ────────────────────────────────
 
 @router.get("/{session_id}/unique/{col_name:path}")
