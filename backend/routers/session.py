@@ -25,6 +25,10 @@ class CellUpdate(BaseModel):
     value: Optional[Any] = None  # string, number, or null from frontend
 
 
+class ClearCellsRequest(BaseModel):
+    cells: list  # [{row_index: int, column: str}, ...]
+
+
 @router.patch("/{session_id}/cell")
 async def update_cell(session_id: str, body: CellUpdate):
     df = store.get(session_id)
@@ -62,6 +66,29 @@ async def update_cell(session_id: str, body: CellUpdate):
         pass
 
     return {"row_index": body.row_index, "column": body.column, "value": stored}
+
+
+@router.post("/{session_id}/clear_cells")
+async def clear_cells(session_id: str, body: ClearCellsRequest):
+    """Clear (set to NaN) multiple cells at once."""
+    df = store.get(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    df = df.copy()
+    cleared = 0
+    for cell in body.cells:
+        r = cell.get("row_index") if isinstance(cell, dict) else None
+        c = cell.get("column") if isinstance(cell, dict) else None
+        if r is None or c is None:
+            continue
+        if c not in df.columns or r < 0 or r >= len(df):
+            continue
+        df.at[r, c] = np.nan
+        cleared += 1
+
+    store.save(session_id, df)
+    return {"cleared": cleared}
 
 
 # ── Export ─────────────────────────────────────────────────────────────────────

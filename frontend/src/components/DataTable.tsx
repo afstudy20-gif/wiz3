@@ -391,6 +391,14 @@ export default function DataTable() {
   const ctxRef = useRef<HTMLDivElement>(null);
   const fillRef = useRef<HTMLInputElement>(null);
 
+  // Multi-cell selection
+  const [selectedCells, setSelectedCells] = useState<Set<string>>(new Set());
+  const [selAnchor, setSelAnchor] = useState<{ row: number; col: string } | null>(null);
+
+  // Right-click context menu (cells)
+  const [cellCtx, setCellCtx] = useState<{ x: number; y: number; row: number; col: string } | null>(null);
+  const cellCtxRef = useRef<HTMLDivElement>(null);
+
   // Right-click context menu (rows)
   const [rowCtx, setRowCtx] = useState<{ x: number; y: number; idx: number } | null>(null);
   const rowCtxRef = useRef<HTMLDivElement>(null);
@@ -412,9 +420,20 @@ export default function DataTable() {
   // Paste notification
   const [pasteMsg, setPasteMsg] = useState<string | null>(null);
 
-  // Ctrl+Z / Ctrl+Y / Ctrl+V
+  // Ctrl+Z / Ctrl+Y / Ctrl+V / Delete / Backspace
   useEffect(() => {
     const handler = async (e: KeyboardEvent) => {
+      // Delete / Backspace clears selected cells (no modifier needed)
+      if ((e.key === "Delete" || e.key === "Backspace") && !editCell && !renameCol && selectedCells.size > 0) {
+        e.preventDefault();
+        clearSelectedCells();
+        return;
+      }
+      // Escape clears selection
+      if (e.key === "Escape" && selectedCells.size > 0 && !editCell) {
+        setSelectedCells(new Set());
+        return;
+      }
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) return;
       // Don't capture when editing a cell or input
@@ -443,14 +462,14 @@ export default function DataTable() {
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [undo, redo, editCell, renameCol, session]);
+  }, [undo, redo, editCell, renameCol, session, selectedCells]);
 
   useEffect(() => {
     if (editCell) setTimeout(() => inputRef.current?.focus(), 0);
   }, [editCell]);
 
   useEffect(() => {
-    setSortCol(null); setFilters({}); setShowMissingOnly(false);
+    setSortCol(null); setFilters({}); setShowMissingOnly(false); setSelectedCells(new Set()); setSelAnchor(null);
   }, [session?.session_id]);
 
   if (!session) return null;
@@ -522,14 +541,15 @@ export default function DataTable() {
 
   // Close context menus on outside click
   useEffect(() => {
-    if (!ctxMenu && !rowCtx) return;
+    if (!ctxMenu && !rowCtx && !cellCtx) return;
     const handler = (e: MouseEvent) => {
       if (ctxMenu && ctxRef.current && !ctxRef.current.contains(e.target as Node)) setCtxMenu(null);
       if (rowCtx && rowCtxRef.current && !rowCtxRef.current.contains(e.target as Node)) setRowCtx(null);
+      if (cellCtx && cellCtxRef.current && !cellCtxRef.current.contains(e.target as Node)) setCellCtx(null);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [ctxMenu, rowCtx]);
+  }, [ctxMenu, rowCtx, cellCtx]);
 
   // Bump undo depth after each backend mutation
   const bumpUndo = () => useStore.setState((s) => ({ undoDepth: s.undoDepth + 1, redoDepth: 0 }));
@@ -598,6 +618,56 @@ export default function DataTable() {
       await api.post(`/api/compute/${session.session_id}/delete_rows`, { row_indices: [rowIdx] });
       const res = await api.get(`/api/stats/${session.session_id}/refresh`);
       useStore.getState().setSession({ ...session, ...res.data }); bumpUndo();
+    } catch { /* ignore */ }
+  };
+
+  // ── Cell selection helpers ──────────────────────────────────────────────────
+  const cellKey = (row: number, col: string) => `${row}:${col}`;
+
+  const selectCell = (row: number, col: string, e: React.MouseEvent) => {
+    if (e.shiftKey && selAnchor) {
+      // Range selection from anchor to current
+      const colNames = columns.map((c) => c.name);
+      const c1 = colNames.indexOf(selAnchor.col);
+      const c2 = colNames.indexOf(col);
+      const rMin = Math.min(selAnchor.row, row);
+      const rMax = Math.max(selAnchor.row, row);
+      const cMin = Math.min(c1, c2);
+      const cMax = Math.max(c1, c2);
+      const next = new Set<string>();
+      for (let r = rMin; r <= rMax; r++) {
+        for (let c = cMin; c <= cMax; c++) {
+          next.add(cellKey(r, colNames[c]));
+        }
+      }
+      setSelectedCells(next);
+    } else if (e.ctrlKey || e.metaKey) {
+      // Toggle single cell
+      setSelectedCells((prev) => {
+        const next = new Set(prev);
+        const k = cellKey(row, col);
+        if (next.has(k)) next.delete(k); else next.add(k);
+        return next;
+      });
+      setSelAnchor({ row, col });
+    } else {
+      // Single select
+      setSelectedCells(new Set([cellKey(row, col)]));
+      setSelAnchor({ row, col });
+    }
+  };
+
+  const clearSelectedCells = async () => {
+    if (!session || selectedCells.size === 0) return;
+    const cells = Array.from(selectedCells).map((k) => {
+      const [r, ...cParts] = k.split(":");
+      return { row_index: Number(r), column: cParts.join(":") };
+    });
+    try {
+      await api.post(`/api/sessions/${session.session_id}/clear_cells`, { cells });
+      const res = await api.get(`/api/stats/${session.session_id}/refresh`);
+      useStore.getState().setSession({ ...session, ...res.data }); bumpUndo();
+      setSelectedCells(new Set());
     } catch { /* ignore */ }
   };
 
@@ -745,6 +815,12 @@ export default function DataTable() {
           {" "}· {columns.length} columns
           {saving && <span className="ml-3 text-indigo-500 text-xs animate-pulse">saving…</span>}
           {pasteMsg && <span className="ml-3 text-emerald-600 text-xs">{pasteMsg}</span>}
+          {selectedCells.size > 1 && (
+            <span className="ml-3 text-blue-600 text-xs font-medium">
+              {selectedCells.size} cells selected
+              <button onClick={() => setSelectedCells(new Set())} className="ml-1 text-blue-400 hover:text-blue-600">✕</button>
+            </span>
+          )}
         </p>
 
         <div className="flex items-center gap-2">
@@ -1027,17 +1103,39 @@ export default function DataTable() {
                     const isEditing = editCell?.rowIdx === origIdx && editCell?.col === col.name;
                     const cellVal   = row[col.name];
                     const isNull    = cellVal === null || cellVal === undefined;
+                    const isSel     = selectedCells.has(cellKey(origIdx, col.name));
 
                     return (
                       <td
                         key={col.name}
-                        onClick={() => !isEditing && startEdit(origIdx, col.name)}
+                        onClick={(e) => {
+                          if (isEditing) return;
+                          if (e.shiftKey || e.ctrlKey || e.metaKey) {
+                            // Multi-select mode — don't open editor
+                            selectCell(origIdx, col.name, e);
+                          } else {
+                            // Single click: select + open editor
+                            selectCell(origIdx, col.name, e);
+                            startEdit(origIdx, col.name);
+                          }
+                        }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          // If right-clicking an unselected cell, select just that cell
+                          if (!selectedCells.has(cellKey(origIdx, col.name))) {
+                            setSelectedCells(new Set([cellKey(origIdx, col.name)]));
+                            setSelAnchor({ row: origIdx, col: col.name });
+                          }
+                          setCellCtx({ x: e.clientX, y: e.clientY, row: origIdx, col: col.name });
+                        }}
                         className={`border-r border-gray-200 font-mono text-xs transition-colors
                           ${isEditing
                             ? "p-0 bg-indigo-50"
-                            : isNull
-                              ? "px-3 py-1.5 cursor-pointer bg-amber-50/60 hover:bg-amber-100/60"
-                              : "px-3 py-1.5 cursor-pointer hover:bg-indigo-50/50"}`}
+                            : isSel
+                              ? "px-3 py-1.5 cursor-pointer bg-blue-100 outline outline-1 outline-blue-400"
+                              : isNull
+                                ? "px-3 py-1.5 cursor-pointer bg-amber-50/60 hover:bg-amber-100/60"
+                                : "px-3 py-1.5 cursor-pointer hover:bg-indigo-50/50"}`}
                       >
                         {isEditing ? (
                           <input
@@ -1087,7 +1185,7 @@ export default function DataTable() {
         <span>·</span>
         <span>Double-click <span className="text-gray-500">header</span> to rename · Right-click to delete</span>
         <span>·</span>
-        <span>Click <span className="text-gray-500">cell</span> to edit · <span className="text-gray-500">⇅</span> to sort</span>
+        <span>Click <span className="text-gray-500">cell</span> to edit · Shift/Ctrl+click to multi-select · Delete to clear</span>
       </div>
 
       {/* ── Right-click context menu ── */}
@@ -1202,6 +1300,47 @@ export default function DataTable() {
           <button onClick={() => deleteColumn(ctxMenu.col)}
             className="w-full text-left px-3 py-1.5 text-xs text-red-500 hover:bg-red-50 flex items-center gap-2">
             🗑️ Delete column
+          </button>
+        </div>
+      )}
+
+      {/* ── Cell right-click context menu ── */}
+      {cellCtx && (
+        <div ref={cellCtxRef}
+          className="fixed z-50 bg-white border border-gray-200 rounded-xl shadow-xl py-1 w-48"
+          style={{ left: cellCtx.x, top: cellCtx.y }}>
+          <div className="px-3 py-1.5 text-xs text-gray-400 font-medium border-b border-gray-100 truncate">
+            {selectedCells.size > 1
+              ? `${selectedCells.size} cells selected`
+              : `Row ${cellCtx.row + 1}, ${cellCtx.col}`}
+          </div>
+          <button onClick={() => { clearSelectedCells(); setCellCtx(null); }}
+            className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+            🧹 Clear {selectedCells.size > 1 ? `${selectedCells.size} cells` : "cell"}
+          </button>
+          <button onClick={() => {
+            // Copy selected cells as TSV
+            if (!session) return;
+            const cells = Array.from(selectedCells).map((k) => {
+              const [r, ...cParts] = k.split(":");
+              return { row: Number(r), col: cParts.join(":") };
+            });
+            const rows = [...new Set(cells.map((c) => c.row))].sort((a, b) => a - b);
+            const cols = [...new Set(cells.map((c) => c.col))];
+            // Order cols by column order
+            const colOrder = columns.map((c) => c.name);
+            cols.sort((a, b) => colOrder.indexOf(a) - colOrder.indexOf(b));
+            const tsv = rows.map((r) =>
+              cols.map((c) => {
+                const val = preview[r]?.[c];
+                return val === null || val === undefined ? "" : String(val);
+              }).join("\t")
+            ).join("\n");
+            navigator.clipboard.writeText(tsv).catch(() => {});
+            setCellCtx(null);
+          }}
+            className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+            📋 Copy {selectedCells.size > 1 ? `${selectedCells.size} cells` : "cell"}
           </button>
         </div>
       )}
