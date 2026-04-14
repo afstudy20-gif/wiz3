@@ -53,6 +53,7 @@ class MICERequest(BaseModel):
     n_imputations: int = 5
     max_iter: int = 10
     random_state: int = 42
+    mechanism: str = "unknown"  # unknown, MCAR, MAR, MNAR
 
 
 @router.post("/mice")
@@ -128,15 +129,22 @@ def mice_imputation(req: MICERequest):
 
     total_imputed = sum(s["n_imputed"] for s in col_summaries)
 
+    mech = req.mechanism.upper()
+    mech_label = {"UNKNOWN": "Unknown", "MCAR": "MCAR", "MAR": "MAR", "MNAR": "MNAR"}.get(mech, "Unknown")
+    mech_ok = mech != "MNAR"
     assumptions = [
-        {"name": "Missing mechanism", "met": True, "detail": "MICE assumes MAR (Missing At Random). Verify clinically."},
+        {"name": "Missing mechanism",
+         "met": mech_ok,
+         "detail": f"Assumed {mech_label}. MICE is valid under MAR/MCAR."
+                   + (" MNAR may produce biased estimates — consider sensitivity analysis." if not mech_ok else "")},
         {"name": "Numeric columns", "met": True, "detail": f"{len(numeric_cols)} numeric features used as predictors."},
         {"name": "Imputations", "met": True, "detail": f"{req.n_imputations} imputations averaged (Rubin's rules approximation)."},
     ]
 
     result_text = (
-        f"Multiple imputation (MICE) was performed using {req.n_imputations} imputations "
-        f"with {req.max_iter} iterations each. {total_imputed} missing values were imputed "
+        f"Multiple imputation (MICE) was performed assuming {mech_label} mechanism, "
+        f"using {req.n_imputations} imputations with {req.max_iter} iterations each. "
+        f"{total_imputed} missing values were imputed "
         f"across {len(cols_with_missing)} variable(s): {', '.join(cols_with_missing)}."
     )
 
