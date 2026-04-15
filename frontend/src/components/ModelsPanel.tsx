@@ -1103,6 +1103,105 @@ function CoefDetailPanel({
   );
 }
 
+// ── Compact SPSS-style Model Summary Table ──────────────────────────────────
+
+function ModelSummaryTable({ s }: { s: any }) {
+  const fmtP = (p: number) => p < 0.001 ? "<0.001" : p.toFixed(4);
+  const cl = s.classification;
+  const hl = s.hosmer_lemeshow;
+  const om = s.omnibus;
+
+  return (
+    <div className="overflow-auto rounded-xl border border-gray-200">
+      <table className="text-xs w-full border-collapse">
+        {/* Model Fit */}
+        <thead>
+          <tr className="bg-gray-50"><th colSpan={4} className="text-left px-3 py-1.5 text-[10px] font-semibold text-gray-500 uppercase tracking-wider border-b border-gray-200">Model Fit</th></tr>
+          <tr className="bg-gray-50 text-gray-400">
+            <th className="px-3 py-1 text-left font-medium border-b border-gray-100">Metric</th>
+            <th className="px-3 py-1 text-right font-medium border-b border-gray-100">Value</th>
+            <th className="px-3 py-1 text-left font-medium border-b border-gray-100" colSpan={2}>Interpretation</th>
+          </tr>
+        </thead>
+        <tbody>
+          {om && (
+            <tr className="border-b border-gray-50">
+              <td className="px-3 py-1.5 text-gray-600">Omnibus χ²</td>
+              <td className="px-3 py-1.5 text-right font-mono text-gray-800">{om.chi2?.toFixed(3)} <span className="text-gray-400">(df={om.df})</span></td>
+              <td className="px-3 py-1.5" colSpan={2}>
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${om.p < 0.05 ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                  p = {fmtP(om.p)}
+                </span>
+                <span className="text-gray-400 ml-1.5 text-[10px]">{om.p < 0.05 ? "Model significant" : "Not significant"}</span>
+              </td>
+            </tr>
+          )}
+          <tr className="border-b border-gray-50">
+            <td className="px-3 py-1.5 text-gray-600">-2 Log Likelihood</td>
+            <td className="px-3 py-1.5 text-right font-mono text-gray-800">{s.minus2ll?.toFixed(3)}</td>
+            <td className="px-3 py-1.5 text-gray-400 text-[10px]" colSpan={2}>Lower = better fit</td>
+          </tr>
+          <tr className="border-b border-gray-50">
+            <td className="px-3 py-1.5 text-gray-600">Cox &amp; Snell R²</td>
+            <td className="px-3 py-1.5 text-right font-mono text-gray-800">{s.cox_snell_r2?.toFixed(4)}</td>
+            <td className="px-3 py-1.5 text-gray-400 text-[10px]" colSpan={2}>Max &lt; 1.0</td>
+          </tr>
+          <tr className="border-b border-gray-50 bg-indigo-50/30">
+            <td className="px-3 py-1.5 text-indigo-700 font-medium">Nagelkerke R²</td>
+            <td className="px-3 py-1.5 text-right font-mono font-bold text-indigo-700">{s.nagelkerke_r2?.toFixed(4)}</td>
+            <td className="px-3 py-1.5" colSpan={2}>
+              <span className="text-[10px] text-indigo-600">{s.nagelkerke_r2 >= 0.4 ? "Excellent" : s.nagelkerke_r2 >= 0.2 ? "Good" : s.nagelkerke_r2 >= 0.1 ? "Moderate" : "Weak"} explanatory power</span>
+            </td>
+          </tr>
+          {s.auc != null && (
+            <tr className="border-b border-gray-50 bg-indigo-50/30">
+              <td className="px-3 py-1.5 text-indigo-700 font-medium">AUC</td>
+              <td className="px-3 py-1.5 text-right font-mono font-bold text-indigo-700">{s.auc?.toFixed(4)}</td>
+              <td className="px-3 py-1.5" colSpan={2}>
+                <span className="text-[10px] text-indigo-600">{s.auc >= 0.9 ? "Excellent" : s.auc >= 0.8 ? "Good" : s.auc >= 0.7 ? "Fair" : "Poor"} discrimination</span>
+              </td>
+            </tr>
+          )}
+
+          {/* Hosmer-Lemeshow */}
+          {hl && (<>
+            <tr className="bg-gray-50"><td colSpan={4} className="px-3 py-1.5 text-[10px] font-semibold text-gray-500 uppercase tracking-wider border-y border-gray-200">Calibration</td></tr>
+            <tr className="border-b border-gray-50">
+              <td className="px-3 py-1.5 text-gray-600">Hosmer-Lemeshow</td>
+              <td className="px-3 py-1.5 text-right font-mono text-gray-800">{hl.chi2?.toFixed(3)} <span className="text-gray-400">(df={hl.df})</span></td>
+              <td className="px-3 py-1.5" colSpan={2}>
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${hl.p >= 0.05 ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                  p = {fmtP(hl.p)}
+                </span>
+                <span className="text-gray-400 ml-1.5 text-[10px]">{hl.p >= 0.05 ? "✓ Good calibration" : "⚠ Poor calibration"}</span>
+              </td>
+            </tr>
+          </>)}
+
+          {/* Classification */}
+          {cl && (<>
+            <tr className="bg-gray-50"><td colSpan={4} className="px-3 py-1.5 text-[10px] font-semibold text-gray-500 uppercase tracking-wider border-y border-gray-200">Classification (cutoff = 0.50)</td></tr>
+            <tr className="border-b border-gray-50">
+              <td className="px-3 py-1.5 text-gray-600">Accuracy</td>
+              <td className="px-3 py-1.5 text-right font-mono font-semibold text-gray-800">{(cl.accuracy * 100).toFixed(1)}%</td>
+              <td className="px-3 py-1.5 text-gray-400 text-[10px]" colSpan={2}>
+                TP={cl.tp} TN={cl.tn} FP={cl.fp} FN={cl.fn}
+              </td>
+            </tr>
+            <tr className="border-b border-gray-50">
+              <td className="px-3 py-1.5 text-gray-600">Sensitivity / Specificity</td>
+              <td className="px-3 py-1.5 text-right font-mono text-gray-800">{(cl.sensitivity * 100).toFixed(1)}% / {(cl.specificity * 100).toFixed(1)}%</td>
+              <td className="px-3 py-1.5 text-gray-400 text-[10px]" colSpan={2}>
+                PPV={(cl.ppv * 100).toFixed(1)}% NPV={(cl.npv * 100).toFixed(1)}%
+              </td>
+            </tr>
+          </>)}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export default function ModelsPanel() {
   const session  = useStore((s) => s.session);
   const showGrid = useStore((s) => s.showGrid);
@@ -1736,90 +1835,8 @@ export default function ModelsPanel() {
 
               {/* ── SPSS-style Model Summary (logistic only) ── */}
               {result.omnibus && (
-                <div className="mt-3 space-y-3">
-                  {/* Omnibus Test */}
-                  <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-                    <div className="px-4 py-2 bg-gray-50 border-b border-gray-100">
-                      <h5 className="text-xs font-semibold text-gray-600">Omnibus Tests of Model Coefficients</h5>
-                    </div>
-                    <div className="grid grid-cols-3 text-center divide-x divide-gray-100 py-3">
-                      <div><p className="text-[10px] text-gray-400">Chi-square</p><p className="text-sm font-semibold text-gray-800">{result.omnibus.chi2?.toFixed(3)}</p></div>
-                      <div><p className="text-[10px] text-gray-400">df</p><p className="text-sm font-semibold text-gray-800">{result.omnibus.df}</p></div>
-                      <div><p className="text-[10px] text-gray-400">Sig.</p><p className={`text-sm font-semibold ${result.omnibus.p < 0.05 ? "text-emerald-600" : "text-amber-600"}`}>{result.omnibus.p < 0.001 ? "<0.001" : result.omnibus.p?.toFixed(4)}</p></div>
-                    </div>
-                  </div>
-
-                  {/* Model Summary */}
-                  <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-                    <div className="px-4 py-2 bg-gray-50 border-b border-gray-100">
-                      <h5 className="text-xs font-semibold text-gray-600">Model Summary</h5>
-                    </div>
-                    <div className="grid grid-cols-4 text-center divide-x divide-gray-100 py-3">
-                      <div><p className="text-[10px] text-gray-400">-2 Log Likelihood</p><p className="text-sm font-semibold text-gray-800">{result.minus2ll?.toFixed(3)}</p></div>
-                      <div><p className="text-[10px] text-gray-400">Cox &amp; Snell R²</p><p className="text-sm font-semibold text-gray-800">{result.cox_snell_r2?.toFixed(4)}</p></div>
-                      <div><p className="text-[10px] text-gray-400">Nagelkerke R²</p><p className="text-sm font-bold text-indigo-700">{result.nagelkerke_r2?.toFixed(4)}</p></div>
-                      <div><p className="text-[10px] text-gray-400">AUC</p><p className="text-sm font-bold text-indigo-700">{result.auc?.toFixed(4) ?? "—"}</p></div>
-                    </div>
-                  </div>
-
-                  {/* Hosmer-Lemeshow */}
-                  {result.hosmer_lemeshow && (
-                    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-                      <div className="px-4 py-2 bg-gray-50 border-b border-gray-100">
-                        <h5 className="text-xs font-semibold text-gray-600">Hosmer and Lemeshow Test</h5>
-                      </div>
-                      <div className="grid grid-cols-3 text-center divide-x divide-gray-100 py-3">
-                        <div><p className="text-[10px] text-gray-400">Chi-square</p><p className="text-sm font-semibold text-gray-800">{result.hosmer_lemeshow.chi2?.toFixed(3)}</p></div>
-                        <div><p className="text-[10px] text-gray-400">df</p><p className="text-sm font-semibold text-gray-800">{result.hosmer_lemeshow.df}</p></div>
-                        <div><p className="text-[10px] text-gray-400">Sig.</p><p className={`text-sm font-semibold ${result.hosmer_lemeshow.p >= 0.05 ? "text-emerald-600" : "text-amber-600"}`}>{result.hosmer_lemeshow.p?.toFixed(4)}</p></div>
-                      </div>
-                      <div className="px-4 py-1.5 border-t border-gray-100 bg-gray-50">
-                        <p className="text-[10px] text-gray-400">{result.hosmer_lemeshow.p >= 0.05 ? "✓ Good calibration (p ≥ 0.05 — no significant lack of fit)" : "⚠ Poor calibration (p < 0.05 — significant lack of fit detected)"}</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Classification Table */}
-                  {result.classification && (
-                    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-                      <div className="px-4 py-2 bg-gray-50 border-b border-gray-100">
-                        <h5 className="text-xs font-semibold text-gray-600">Classification Table (cutoff = 0.50)</h5>
-                      </div>
-                      <div className="p-3">
-                        <table className="text-xs w-full border-collapse">
-                          <thead>
-                            <tr className="text-gray-500">
-                              <th className="text-left py-1 px-2 border-b border-gray-100"></th>
-                              <th className="text-center py-1 px-2 border-b border-gray-100">Predicted 0</th>
-                              <th className="text-center py-1 px-2 border-b border-gray-100">Predicted 1</th>
-                              <th className="text-center py-1 px-2 border-b border-gray-100">Correct %</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            <tr>
-                              <td className="py-1 px-2 font-medium text-gray-600 border-b border-gray-50">Observed 0</td>
-                              <td className="py-1 px-2 text-center text-emerald-700 font-semibold border-b border-gray-50">{result.classification.tn}</td>
-                              <td className="py-1 px-2 text-center text-red-500 border-b border-gray-50">{result.classification.fp}</td>
-                              <td className="py-1 px-2 text-center font-semibold text-gray-700 border-b border-gray-50">{(result.classification.specificity * 100).toFixed(1)}%</td>
-                            </tr>
-                            <tr>
-                              <td className="py-1 px-2 font-medium text-gray-600">Observed 1</td>
-                              <td className="py-1 px-2 text-center text-red-500">{result.classification.fn}</td>
-                              <td className="py-1 px-2 text-center text-emerald-700 font-semibold">{result.classification.tp}</td>
-                              <td className="py-1 px-2 text-center font-semibold text-gray-700">{(result.classification.sensitivity * 100).toFixed(1)}%</td>
-                            </tr>
-                          </tbody>
-                        </table>
-                        <div className="flex gap-4 mt-2 text-[10px] text-gray-500">
-                          <span>Overall Accuracy: <strong className="text-gray-800">{(result.classification.accuracy * 100).toFixed(1)}%</strong></span>
-                          <span>Sensitivity: <strong>{(result.classification.sensitivity * 100).toFixed(1)}%</strong></span>
-                          <span>Specificity: <strong>{(result.classification.specificity * 100).toFixed(1)}%</strong></span>
-                          <span>PPV: <strong>{(result.classification.ppv * 100).toFixed(1)}%</strong></span>
-                          <span>NPV: <strong>{(result.classification.npv * 100).toFixed(1)}%</strong></span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                <div className="mt-3">
+                  <ModelSummaryTable s={result} />
                 </div>
               )}
             </div>
@@ -1919,61 +1936,9 @@ export default function ModelsPanel() {
 
             {/* SPSS-style model stats for OR Table multivariate model */}
             {result.model_stats && (
-              <div className="panel space-y-3">
-                <h4 className="font-semibold text-gray-900 mb-1">Multivariate Model Summary</h4>
-                {/* Omnibus */}
-                {result.model_stats.omnibus && (
-                  <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-                    <div className="px-4 py-2 bg-gray-50 border-b border-gray-100"><h5 className="text-xs font-semibold text-gray-600">Omnibus Tests of Model Coefficients</h5></div>
-                    <div className="grid grid-cols-3 text-center divide-x divide-gray-100 py-3">
-                      <div><p className="text-[10px] text-gray-400">Chi-square</p><p className="text-sm font-semibold text-gray-800">{result.model_stats.omnibus.chi2?.toFixed(3)}</p></div>
-                      <div><p className="text-[10px] text-gray-400">df</p><p className="text-sm font-semibold text-gray-800">{result.model_stats.omnibus.df}</p></div>
-                      <div><p className="text-[10px] text-gray-400">Sig.</p><p className={`text-sm font-semibold ${result.model_stats.omnibus.p < 0.05 ? "text-emerald-600" : "text-amber-600"}`}>{result.model_stats.omnibus.p < 0.001 ? "<0.001" : result.model_stats.omnibus.p?.toFixed(4)}</p></div>
-                    </div>
-                  </div>
-                )}
-                {/* Model Summary row */}
-                <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-                  <div className="px-4 py-2 bg-gray-50 border-b border-gray-100"><h5 className="text-xs font-semibold text-gray-600">Model Summary</h5></div>
-                  <div className="grid grid-cols-4 text-center divide-x divide-gray-100 py-3">
-                    <div><p className="text-[10px] text-gray-400">-2 Log Likelihood</p><p className="text-sm font-semibold text-gray-800">{result.model_stats.minus2ll?.toFixed(3)}</p></div>
-                    <div><p className="text-[10px] text-gray-400">Cox &amp; Snell R²</p><p className="text-sm font-semibold text-gray-800">{result.model_stats.cox_snell_r2?.toFixed(4)}</p></div>
-                    <div><p className="text-[10px] text-gray-400">Nagelkerke R²</p><p className="text-sm font-bold text-indigo-700">{result.model_stats.nagelkerke_r2?.toFixed(4)}</p></div>
-                    <div><p className="text-[10px] text-gray-400">AUC</p><p className="text-sm font-bold text-indigo-700">{result.model_stats.auc?.toFixed(4) ?? "—"}</p></div>
-                  </div>
-                </div>
-                {/* Hosmer-Lemeshow */}
-                {result.model_stats.hosmer_lemeshow && (
-                  <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-                    <div className="px-4 py-2 bg-gray-50 border-b border-gray-100"><h5 className="text-xs font-semibold text-gray-600">Hosmer and Lemeshow Test</h5></div>
-                    <div className="grid grid-cols-3 text-center divide-x divide-gray-100 py-3">
-                      <div><p className="text-[10px] text-gray-400">Chi-square</p><p className="text-sm font-semibold text-gray-800">{result.model_stats.hosmer_lemeshow.chi2?.toFixed(3)}</p></div>
-                      <div><p className="text-[10px] text-gray-400">df</p><p className="text-sm font-semibold text-gray-800">{result.model_stats.hosmer_lemeshow.df}</p></div>
-                      <div><p className="text-[10px] text-gray-400">Sig.</p><p className={`text-sm font-semibold ${result.model_stats.hosmer_lemeshow.p >= 0.05 ? "text-emerald-600" : "text-amber-600"}`}>{result.model_stats.hosmer_lemeshow.p?.toFixed(4)}</p></div>
-                    </div>
-                    <div className="px-4 py-1.5 border-t border-gray-100 bg-gray-50"><p className="text-[10px] text-gray-400">{result.model_stats.hosmer_lemeshow.p >= 0.05 ? "✓ Good calibration (p ≥ 0.05)" : "⚠ Poor calibration (p < 0.05)"}</p></div>
-                  </div>
-                )}
-                {/* Classification Table */}
-                {result.model_stats.classification && (
-                  <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-                    <div className="px-4 py-2 bg-gray-50 border-b border-gray-100"><h5 className="text-xs font-semibold text-gray-600">Classification Table (cutoff = 0.50)</h5></div>
-                    <div className="p-3">
-                      <table className="text-xs w-full border-collapse">
-                        <thead><tr className="text-gray-500"><th className="text-left py-1 px-2 border-b border-gray-100"></th><th className="text-center py-1 px-2 border-b border-gray-100">Pred 0</th><th className="text-center py-1 px-2 border-b border-gray-100">Pred 1</th><th className="text-center py-1 px-2 border-b border-gray-100">Correct %</th></tr></thead>
-                        <tbody>
-                          <tr><td className="py-1 px-2 font-medium text-gray-600 border-b border-gray-50">Obs 0</td><td className="py-1 px-2 text-center text-emerald-700 font-semibold border-b border-gray-50">{result.model_stats.classification.tn}</td><td className="py-1 px-2 text-center text-red-500 border-b border-gray-50">{result.model_stats.classification.fp}</td><td className="py-1 px-2 text-center font-semibold text-gray-700 border-b border-gray-50">{(result.model_stats.classification.specificity * 100).toFixed(1)}%</td></tr>
-                          <tr><td className="py-1 px-2 font-medium text-gray-600">Obs 1</td><td className="py-1 px-2 text-center text-red-500">{result.model_stats.classification.fn}</td><td className="py-1 px-2 text-center text-emerald-700 font-semibold">{result.model_stats.classification.tp}</td><td className="py-1 px-2 text-center font-semibold text-gray-700">{(result.model_stats.classification.sensitivity * 100).toFixed(1)}%</td></tr>
-                        </tbody>
-                      </table>
-                      <div className="flex gap-4 mt-2 text-[10px] text-gray-500">
-                        <span>Accuracy: <strong className="text-gray-800">{(result.model_stats.classification.accuracy * 100).toFixed(1)}%</strong></span>
-                        <span>Sensitivity: <strong>{(result.model_stats.classification.sensitivity * 100).toFixed(1)}%</strong></span>
-                        <span>Specificity: <strong>{(result.model_stats.classification.specificity * 100).toFixed(1)}%</strong></span>
-                      </div>
-                    </div>
-                  </div>
-                )}
+              <div className="panel">
+                <h4 className="font-semibold text-gray-900 mb-2">Multivariate Model Summary</h4>
+                <ModelSummaryTable s={result.model_stats} />
               </div>
             )}
 
