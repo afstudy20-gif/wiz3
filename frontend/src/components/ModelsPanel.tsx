@@ -1260,7 +1260,7 @@ export default function ModelsPanel() {
     return Object.keys(out).length > 0 ? out : undefined;
   };
 
-  const isSurvival  = model === "km" || model === "cox";
+  const isSurvival  = false;  // KM/Cox moved to Survival Advanced tab
   const isORTable   = model === "ortable";
   const isRCS       = model === "rcs";
   const hasRobustSE = model === "linear" || model === "logistic" || model === "poisson";
@@ -1275,8 +1275,6 @@ export default function ModelsPanel() {
             ["logistic", "Logistic Regression",      "Predict a binary outcome (0/1, yes/no) — outputs Odds Ratios showing how each predictor changes the odds of the event."],
             ["ortable",  "OR Table (Uni + Multi)",   "Run univariate logistic regression for each predictor separately, then all significant ones together in a multivariate model. Standard for clinical papers."],
             ["poisson",  "Poisson Regression",       "Count outcome model (e.g. number of events). Outputs Incidence Rate Ratios (IRR = eβ). Use when the outcome is a non-negative integer (event counts, re-admissions, etc.)."],
-            ["km",       "Kaplan-Meier",             "Plot survival over time, comparing curves between groups (e.g. treatment vs. control). Tests group differences with the log-rank test."],
-            ["cox",      "Cox PH",                   "Regression for time-to-event data. Outputs Hazard Ratios (HR) — how much each predictor changes the rate of the event occurring over time."],
             ["rcs",      "RCS Dose-Response",        "Restricted Cubic Splines — models non-linear (U/J-shaped) relationships between a continuous predictor and a binary outcome. Outputs a publication-ready dose-response curve with 95% CI."],
           ] as const).map(([v, l, desc]) => (
             <label key={v} className="flex items-start gap-2 cursor-pointer group">
@@ -1727,12 +1725,101 @@ export default function ModelsPanel() {
                   </InfoBanner>
                 </div>
               )}
-              {result.pseudo_r2 != null && (
+              {result.pseudo_r2 != null && !result.omnibus && (
                 <div className="mt-3">
                   <InfoBanner>
                     Pseudo R² = {result.pseudo_r2?.toFixed(3)}.{" "}
                     {result.pseudo_r2 >= 0.4 ? "Excellent model fit." : result.pseudo_r2 >= 0.2 ? "Good model fit." : result.pseudo_r2 >= 0.1 ? "Moderate model fit." : "Weak model fit — consider adding more informative predictors."}
                   </InfoBanner>
+                </div>
+              )}
+
+              {/* ── SPSS-style Model Summary (logistic only) ── */}
+              {result.omnibus && (
+                <div className="mt-3 space-y-3">
+                  {/* Omnibus Test */}
+                  <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                    <div className="px-4 py-2 bg-gray-50 border-b border-gray-100">
+                      <h5 className="text-xs font-semibold text-gray-600">Omnibus Tests of Model Coefficients</h5>
+                    </div>
+                    <div className="grid grid-cols-3 text-center divide-x divide-gray-100 py-3">
+                      <div><p className="text-[10px] text-gray-400">Chi-square</p><p className="text-sm font-semibold text-gray-800">{result.omnibus.chi2?.toFixed(3)}</p></div>
+                      <div><p className="text-[10px] text-gray-400">df</p><p className="text-sm font-semibold text-gray-800">{result.omnibus.df}</p></div>
+                      <div><p className="text-[10px] text-gray-400">Sig.</p><p className={`text-sm font-semibold ${result.omnibus.p < 0.05 ? "text-emerald-600" : "text-amber-600"}`}>{result.omnibus.p < 0.001 ? "<0.001" : result.omnibus.p?.toFixed(4)}</p></div>
+                    </div>
+                  </div>
+
+                  {/* Model Summary */}
+                  <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                    <div className="px-4 py-2 bg-gray-50 border-b border-gray-100">
+                      <h5 className="text-xs font-semibold text-gray-600">Model Summary</h5>
+                    </div>
+                    <div className="grid grid-cols-4 text-center divide-x divide-gray-100 py-3">
+                      <div><p className="text-[10px] text-gray-400">-2 Log Likelihood</p><p className="text-sm font-semibold text-gray-800">{result.minus2ll?.toFixed(3)}</p></div>
+                      <div><p className="text-[10px] text-gray-400">Cox &amp; Snell R²</p><p className="text-sm font-semibold text-gray-800">{result.cox_snell_r2?.toFixed(4)}</p></div>
+                      <div><p className="text-[10px] text-gray-400">Nagelkerke R²</p><p className="text-sm font-bold text-indigo-700">{result.nagelkerke_r2?.toFixed(4)}</p></div>
+                      <div><p className="text-[10px] text-gray-400">AUC</p><p className="text-sm font-bold text-indigo-700">{result.auc?.toFixed(4) ?? "—"}</p></div>
+                    </div>
+                  </div>
+
+                  {/* Hosmer-Lemeshow */}
+                  {result.hosmer_lemeshow && (
+                    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                      <div className="px-4 py-2 bg-gray-50 border-b border-gray-100">
+                        <h5 className="text-xs font-semibold text-gray-600">Hosmer and Lemeshow Test</h5>
+                      </div>
+                      <div className="grid grid-cols-3 text-center divide-x divide-gray-100 py-3">
+                        <div><p className="text-[10px] text-gray-400">Chi-square</p><p className="text-sm font-semibold text-gray-800">{result.hosmer_lemeshow.chi2?.toFixed(3)}</p></div>
+                        <div><p className="text-[10px] text-gray-400">df</p><p className="text-sm font-semibold text-gray-800">{result.hosmer_lemeshow.df}</p></div>
+                        <div><p className="text-[10px] text-gray-400">Sig.</p><p className={`text-sm font-semibold ${result.hosmer_lemeshow.p >= 0.05 ? "text-emerald-600" : "text-amber-600"}`}>{result.hosmer_lemeshow.p?.toFixed(4)}</p></div>
+                      </div>
+                      <div className="px-4 py-1.5 border-t border-gray-100 bg-gray-50">
+                        <p className="text-[10px] text-gray-400">{result.hosmer_lemeshow.p >= 0.05 ? "✓ Good calibration (p ≥ 0.05 — no significant lack of fit)" : "⚠ Poor calibration (p < 0.05 — significant lack of fit detected)"}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Classification Table */}
+                  {result.classification && (
+                    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                      <div className="px-4 py-2 bg-gray-50 border-b border-gray-100">
+                        <h5 className="text-xs font-semibold text-gray-600">Classification Table (cutoff = 0.50)</h5>
+                      </div>
+                      <div className="p-3">
+                        <table className="text-xs w-full border-collapse">
+                          <thead>
+                            <tr className="text-gray-500">
+                              <th className="text-left py-1 px-2 border-b border-gray-100"></th>
+                              <th className="text-center py-1 px-2 border-b border-gray-100">Predicted 0</th>
+                              <th className="text-center py-1 px-2 border-b border-gray-100">Predicted 1</th>
+                              <th className="text-center py-1 px-2 border-b border-gray-100">Correct %</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr>
+                              <td className="py-1 px-2 font-medium text-gray-600 border-b border-gray-50">Observed 0</td>
+                              <td className="py-1 px-2 text-center text-emerald-700 font-semibold border-b border-gray-50">{result.classification.tn}</td>
+                              <td className="py-1 px-2 text-center text-red-500 border-b border-gray-50">{result.classification.fp}</td>
+                              <td className="py-1 px-2 text-center font-semibold text-gray-700 border-b border-gray-50">{(result.classification.specificity * 100).toFixed(1)}%</td>
+                            </tr>
+                            <tr>
+                              <td className="py-1 px-2 font-medium text-gray-600">Observed 1</td>
+                              <td className="py-1 px-2 text-center text-red-500">{result.classification.fn}</td>
+                              <td className="py-1 px-2 text-center text-emerald-700 font-semibold">{result.classification.tp}</td>
+                              <td className="py-1 px-2 text-center font-semibold text-gray-700">{(result.classification.sensitivity * 100).toFixed(1)}%</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                        <div className="flex gap-4 mt-2 text-[10px] text-gray-500">
+                          <span>Overall Accuracy: <strong className="text-gray-800">{(result.classification.accuracy * 100).toFixed(1)}%</strong></span>
+                          <span>Sensitivity: <strong>{(result.classification.sensitivity * 100).toFixed(1)}%</strong></span>
+                          <span>Specificity: <strong>{(result.classification.specificity * 100).toFixed(1)}%</strong></span>
+                          <span>PPV: <strong>{(result.classification.ppv * 100).toFixed(1)}%</strong></span>
+                          <span>NPV: <strong>{(result.classification.npv * 100).toFixed(1)}%</strong></span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

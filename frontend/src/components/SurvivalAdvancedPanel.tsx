@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import Plot from "../PlotComponent";
 import { useStore } from "../store";
-import { runMICE, runFineGray, runEValue, runLandmark } from "../api";
+import { runMICE, runFineGray, runEValue, runLandmark, runKM, runCox } from "../api";
 import ResultExporter from "./ResultExporter";
 import PlotExporter from "./PlotExporter";
 
@@ -167,6 +167,23 @@ export default function SurvivalAdvancedPanel() {
   const [evResult, setEvResult] = useState<any>(null);
   const [evLoading, setEvLoading] = useState(false);
   const [evError, setEvError] = useState<string | null>(null);
+
+  // KM state
+  const [kmDuration, setKmDuration] = useState("");
+  const [kmEvent, setKmEvent] = useState("");
+  const [kmGroup, setKmGroup] = useState("");
+  const [kmResult, setKmResult] = useState<any>(null);
+  const [kmLoading, setKmLoading] = useState(false);
+  const [kmError, setKmError] = useState<string | null>(null);
+  const kmPlotRef = useRef<any>(null);
+
+  // Cox state
+  const [coxDuration, setCoxDuration] = useState("");
+  const [coxEvent, setCoxEvent] = useState("");
+  const [coxPreds, setCoxPreds] = useState<string[]>([]);
+  const [coxResult, setCoxResult] = useState<any>(null);
+  const [coxLoading, setCoxLoading] = useState(false);
+  const [coxError, setCoxError] = useState<string | null>(null);
 
   // Landmark state
   const [lmDuration, setLmDuration] = useState("");
@@ -481,6 +498,146 @@ export default function SurvivalAdvancedPanel() {
           </div>
         )}
         <ResultBlock result={lmResult} />
+      </Section>
+
+      {/* ── Kaplan-Meier ── */}
+      <Section title="Kaplan-Meier Survival" description="Visualise time-to-event data with survival curves and log-rank test">
+        <div className="grid grid-cols-3 gap-3">
+          <VarSelect label="Duration (time)" value={kmDuration} onChange={setKmDuration} columns={columns} kinds={["numeric"]} />
+          <VarSelect label="Event (0/1)" value={kmEvent} onChange={setKmEvent} columns={columns} />
+          <VarSelect label="Group (optional)" value={kmGroup} onChange={setKmGroup} columns={columns} kinds={["categorical"]} />
+        </div>
+        <div className="flex items-center gap-3">
+          <RunButton onClick={async () => {
+            if (!kmDuration || !kmEvent) { setKmError("Select duration and event columns"); return; }
+            setKmLoading(true); setKmError(null);
+            try {
+              const res = await runKM({ session_id: sid, duration_col: kmDuration, event_col: kmEvent, group_col: kmGroup || undefined });
+              setKmResult(res.data);
+            } catch (e: any) { setKmError(e?.response?.data?.detail ?? "KM failed"); }
+            finally { setKmLoading(false); }
+          }} loading={kmLoading} label="Run Kaplan-Meier" />
+          {kmError && <p className="text-xs text-red-500">{kmError}</p>}
+        </div>
+        {kmResult?.groups && (
+          <>
+            <div className="relative" ref={kmPlotRef}>
+              <Plot
+                data={kmResult.groups.map((g: any, i: number) => ({
+                  x: g.curve.map((p: any) => p.time),
+                  y: g.curve.map((p: any) => p.survival),
+                  type: "scatter", mode: "lines",
+                  name: g.group,
+                  line: { width: 2, color: ["#6366f1","#f59e0b","#10b981","#ef4444","#8b5cf6"][i % 5] },
+                }))}
+                layout={{
+                  title: "Kaplan-Meier Survival Curves",
+                  xaxis: { title: kmDuration, gridcolor: "#e5e7eb" },
+                  yaxis: { title: "Survival Probability", range: [0, 1.05], gridcolor: "#e5e7eb" },
+                  paper_bgcolor: "transparent", plot_bgcolor: "#ffffff",
+                  font: { color: "#374151", size: 12 },
+                  margin: { t: 40, r: 20, b: 50, l: 60 }, showlegend: true,
+                }}
+                config={{ responsive: true }} style={{ width: "100%", height: 400 }}
+              />
+              <PlotExporter plotRef={kmPlotRef} title="KM_Survival" />
+            </div>
+            {/* Group summary */}
+            <div className="overflow-auto rounded-lg border border-gray-200">
+              <table className="text-xs w-full">
+                <thead><tr className="bg-gray-50">
+                  <th className="px-3 py-1.5 text-left text-gray-500">Group</th>
+                  <th className="px-3 py-1.5 text-left text-gray-500">N</th>
+                  <th className="px-3 py-1.5 text-left text-gray-500">Events</th>
+                  <th className="px-3 py-1.5 text-left text-gray-500">Median Survival</th>
+                </tr></thead>
+                <tbody>
+                  {kmResult.groups.map((g: any, i: number) => (
+                    <tr key={i} className="border-t border-gray-100">
+                      <td className="px-3 py-1 font-medium text-gray-700">{g.group}</td>
+                      <td className="px-3 py-1 text-gray-600">{g.n}</td>
+                      <td className="px-3 py-1 text-gray-600">{g.events}</td>
+                      <td className="px-3 py-1 text-gray-600">{g.median_survival ?? "NR"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {kmResult.logrank && (
+              <div className={`text-sm px-4 py-2 rounded-lg border ${kmResult.logrank.p < 0.05 ? "bg-indigo-50 border-indigo-200 text-indigo-700" : "bg-gray-50 border-gray-200 text-gray-600"}`}>
+                Log-rank test: p = {kmResult.logrank.p < 0.001 ? "<0.001" : kmResult.logrank.p?.toFixed(4)}
+                {kmResult.logrank.p < 0.05 ? " — Significant difference between groups" : " — No significant difference"}
+              </div>
+            )}
+          </>
+        )}
+      </Section>
+
+      {/* ── Cox PH ── */}
+      <Section title="Cox Proportional Hazards" description="Regression for time-to-event data — outputs Hazard Ratios (HR)">
+        <div className="grid grid-cols-3 gap-3">
+          <VarSelect label="Duration (time)" value={coxDuration} onChange={setCoxDuration} columns={columns} kinds={["numeric"]} />
+          <VarSelect label="Event (0/1)" value={coxEvent} onChange={setCoxEvent} columns={columns} />
+        </div>
+        <MultiSelect label="Predictors" columns={columns} selected={coxPreds} onChange={setCoxPreds} />
+        <div className="flex items-center gap-3">
+          <RunButton onClick={async () => {
+            if (!coxDuration || !coxEvent || coxPreds.length === 0) { setCoxError("Select duration, event, and at least one predictor"); return; }
+            setCoxLoading(true); setCoxError(null);
+            try {
+              const res = await runCox({ session_id: sid, duration_col: coxDuration, event_col: coxEvent, predictors: coxPreds });
+              setCoxResult(res.data);
+            } catch (e: any) { setCoxError(e?.response?.data?.detail ?? "Cox failed"); }
+            finally { setCoxLoading(false); }
+          }} loading={coxLoading} label="Run Cox Regression" />
+          {coxError && <p className="text-xs text-red-500">{coxError}</p>}
+        </div>
+        {coxResult?.coefficients && (
+          <>
+            {/* Model summary */}
+            <div className="grid grid-cols-3 gap-2">
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-center">
+                <p className="text-[10px] text-gray-400">N (events)</p>
+                <p className="text-sm font-semibold text-gray-800">{coxResult.n}</p>
+              </div>
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-center">
+                <p className="text-[10px] text-gray-400">C-index</p>
+                <p className="text-sm font-bold text-indigo-700">{coxResult.concordance?.toFixed(4)}</p>
+              </div>
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-center">
+                <p className="text-[10px] text-gray-400">Log-Likelihood</p>
+                <p className="text-sm font-semibold text-gray-800">{coxResult.log_likelihood?.toFixed(2)}</p>
+              </div>
+            </div>
+            {/* Coefficients table */}
+            <div className="overflow-auto rounded-lg border border-gray-200">
+              <table className="text-xs w-full">
+                <thead><tr className="bg-gray-50">
+                  <th className="px-3 py-1.5 text-left text-gray-500">Variable</th>
+                  <th className="px-3 py-1.5 text-left text-gray-500">B</th>
+                  <th className="px-3 py-1.5 text-left text-gray-500">SE</th>
+                  <th className="px-3 py-1.5 text-left text-gray-500">HR</th>
+                  <th className="px-3 py-1.5 text-left text-gray-500">95% CI</th>
+                  <th className="px-3 py-1.5 text-left text-gray-500">p</th>
+                </tr></thead>
+                <tbody>
+                  {coxResult.coefficients.map((c: any, i: number) => (
+                    <tr key={i} className="border-t border-gray-100">
+                      <td className="px-3 py-1 font-medium text-gray-700">{c.variable}</td>
+                      <td className="px-3 py-1 text-gray-600">{c.log_hr?.toFixed(4)}</td>
+                      <td className="px-3 py-1 text-gray-600">{c.se?.toFixed(4)}</td>
+                      <td className="px-3 py-1 font-semibold text-gray-800">{c.hr?.toFixed(4)}</td>
+                      <td className="px-3 py-1 text-gray-500">{c.hr_ci_low?.toFixed(3)} – {c.hr_ci_high?.toFixed(3)}</td>
+                      <td className={`px-3 py-1 ${c.p < 0.05 ? "text-indigo-600 font-semibold" : "text-gray-500"}`}>
+                        {c.p < 0.001 ? "<0.001" : c.p?.toFixed(4)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
       </Section>
     </div>
   );

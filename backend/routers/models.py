@@ -230,20 +230,99 @@ def logistic_regression(req: LogisticRequest):
 
     cov_type = "HC3" if req.robust_se else "nonrobust"
     model = sm.Logit(y, X_const).fit(disp=False, cov_type=cov_type)
+
+    # ── Variables in the Equation (B, SE, Wald, df, Sig, Exp(B), CI) ──
     coefs = []
+    ci = model.conf_int()
     for var in model.params.index:
         est = float(model.params[var])
-        ci = model.conf_int()
+        se_val = float(model.bse[var])
+        z_val = float(model.tvalues[var])
+        wald = z_val ** 2  # Wald = z²
         coefs.append({
             "variable": str(var),
+            "B": est,
             "log_odds": est,
-            "odds_ratio": float(np.exp(est)),
-            "se": float(model.bse[var]),
-            "z": float(model.tvalues[var]),
+            "se": se_val,
+            "wald": round(wald, 4),
+            "df": 1,
             "p": float(model.pvalues[var]),
+            "odds_ratio": float(np.exp(est)),
+            "z": z_val,
             "or_ci_low": float(np.exp(ci.loc[var, 0])),
             "or_ci_high": float(np.exp(ci.loc[var, 1])),
         })
+
+    # ── SPSS-style Model-Level Statistics ──
+    from scipy.stats import chi2 as chi2_dist
+    from sklearn.metrics import roc_auc_score, confusion_matrix
+
+    n = float(model.nobs)
+    llf = float(model.llf)
+    llnull = float(model.llnull)
+
+    # Omnibus Test of Model Coefficients (LR test)
+    omnibus_chi2 = -2 * (llnull - llf)
+    omnibus_df = len(model.params) - 1  # exclude intercept
+    omnibus_p = float(1 - chi2_dist.cdf(omnibus_chi2, omnibus_df)) if omnibus_df > 0 else 1.0
+
+    # -2 Log Likelihood
+    minus2ll = -2 * llf
+
+    # Cox & Snell R²
+    cox_snell_r2 = 1 - np.exp((2 / n) * (llnull - llf))
+
+    # Nagelkerke R²
+    max_r2 = 1 - np.exp((2 / n) * llnull)
+    nagelkerke_r2 = float(cox_snell_r2 / max_r2) if max_r2 != 0 else 0.0
+
+    # Predicted probabilities
+    pred_probs = model.predict(X_const)
+    y_arr = np.array(y)
+
+    # Hosmer-Lemeshow test
+    try:
+        order = np.argsort(pred_probs)
+        groups = np.array_split(order, 10)
+        hl_chi2_val = 0.0
+        for grp in groups:
+            obs_1 = y_arr[grp].sum()
+            obs_0 = len(grp) - obs_1
+            exp_1 = pred_probs[grp].sum()
+            exp_0 = len(grp) - exp_1
+            if exp_1 > 0:
+                hl_chi2_val += (obs_1 - exp_1) ** 2 / exp_1
+            if exp_0 > 0:
+                hl_chi2_val += (obs_0 - exp_0) ** 2 / exp_0
+        hl_df = 8  # g - 2, where g = 10
+        hl_p = float(1 - chi2_dist.cdf(hl_chi2_val, hl_df))
+        hosmer_lemeshow = {"chi2": round(hl_chi2_val, 4), "df": hl_df, "p": round(hl_p, 6)}
+    except Exception:
+        hosmer_lemeshow = None
+
+    # Classification table
+    y_pred = (pred_probs >= 0.5).astype(int)
+    try:
+        cm = confusion_matrix(y_arr, y_pred)
+        tn, fp, fn, tp = cm.ravel()
+        accuracy = float((tp + tn) / (tp + tn + fp + fn))
+        sensitivity = float(tp / (tp + fn)) if (tp + fn) > 0 else 0.0
+        specificity = float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0
+        ppv = float(tp / (tp + fp)) if (tp + fp) > 0 else 0.0
+        npv = float(tn / (tn + fn)) if (tn + fn) > 0 else 0.0
+        classification = {
+            "accuracy": round(accuracy, 4), "sensitivity": round(sensitivity, 4),
+            "specificity": round(specificity, 4), "ppv": round(ppv, 4), "npv": round(npv, 4),
+            "tp": int(tp), "tn": int(tn), "fp": int(fp), "fn": int(fn),
+        }
+    except Exception:
+        classification = None
+
+    # AUC
+    try:
+        auc = float(roc_auc_score(y_arr, pred_probs))
+    except Exception:
+        auc = None
 
     return {
         "model": f"Logistic Regression{' [Robust SE]' if req.robust_se else ''}",
@@ -251,10 +330,23 @@ def logistic_regression(req: LogisticRequest):
         "n": int(model.nobs),
         "n_excluded": n_excluded,
         "imputation": req.imputation or "listwise",
+        # Model Summary
+        "minus2ll": round(minus2ll, 4),
+        "cox_snell_r2": round(float(cox_snell_r2), 4),
+        "nagelkerke_r2": round(float(nagelkerke_r2), 4),
         "pseudo_r2": float(model.prsquared),
-        "log_likelihood": float(model.llf),
+        "log_likelihood": llf,
         "aic": float(model.aic),
         "bic": float(model.bic),
+        # Omnibus Test
+        "omnibus": {"chi2": round(omnibus_chi2, 4), "df": omnibus_df, "p": round(omnibus_p, 6)},
+        # Hosmer-Lemeshow
+        "hosmer_lemeshow": hosmer_lemeshow,
+        # Classification
+        "classification": classification,
+        # AUC
+        "auc": round(auc, 4) if auc is not None else None,
+        # Coefficients
         "coefficients": coefs,
     }
 
