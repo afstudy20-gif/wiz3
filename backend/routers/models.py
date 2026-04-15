@@ -347,15 +347,21 @@ def logistic_or_table(req: LogisticRequest):
     # Helper: fit logit and extract first non-const row OR all predictor rows
     def _fit_row(X_df, variable_names):
         X_enc = pd.get_dummies(X_df, drop_first=True).astype(float)
-        # Drop rows with NaN in predictors
-        valid = X_enc.notna().all(axis=1)
-        X_clean = X_enc[valid]
-        y_clean = y[valid.values] if len(valid) == len(y) else y
+        # Build a combined frame to drop NaN from both predictors and outcome together
+        combined = X_enc.copy()
+        combined["__y__"] = y
+        combined = combined.dropna()
+        if len(combined) < 10:
+            raise HTTPException(status_code=422, detail=f"Insufficient data after removing missing values ({len(combined)} rows)")
+        y_clean = combined["__y__"].values.astype(int)
+        X_clean = combined.drop(columns=["__y__"])
+        if len(set(y_clean)) < 2:
+            raise HTTPException(status_code=422, detail="After NaN removal, outcome has only one unique value.")
         X_const = sm.add_constant(X_clean, has_constant="add")
-        if len(X_const) < 10:
-            raise HTTPException(status_code=422, detail=f"Insufficient data after removing missing values ({len(X_const)} rows)")
         try:
             m = sm.Logit(y_clean, X_const).fit(disp=False, maxiter=200)
+        except np.linalg.LinAlgError:
+            raise HTTPException(status_code=422, detail="Perfect separation detected — model cannot converge. Try removing collinear predictors.")
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Model convergence error: {exc}")
         rows = {}
@@ -363,25 +369,30 @@ def logistic_or_table(req: LogisticRequest):
         for var in m.params.index:
             if var == "const":
                 continue
-            rows[var] = {
-                "or": float(np.exp(m.params[var])),
-                "ci_low": float(np.exp(ci.loc[var, 0])),
-                "ci_high": float(np.exp(ci.loc[var, 1])),
-                "p": float(m.pvalues[var]),
-            }
+            or_val = float(np.exp(m.params[var]))
+            ci_lo = float(np.exp(ci.loc[var, 0]))
+            ci_hi = float(np.exp(ci.loc[var, 1]))
+            p_val = float(m.pvalues[var])
+            # Cap extreme ORs for JSON safety
+            if not np.isfinite(or_val): or_val = 9999.0
+            if not np.isfinite(ci_lo): ci_lo = 0.0
+            if not np.isfinite(ci_hi): ci_hi = 9999.0
+            rows[var] = {"or": or_val, "ci_low": ci_lo, "ci_high": ci_hi, "p": p_val}
         return rows
 
     # ── Univariate: one model per predictor (post-scaling) ───────────────────
     uni_results: dict = {}
+    skipped: list = []
     for pred in pred_list:
         try:
             rows = _fit_row(df[[pred]], [pred])
             for var, vals in rows.items():
                 uni_results[var] = vals
-        except HTTPException:
-            raise
+        except HTTPException as he:
+            # Skip this predictor with a warning instead of crashing
+            skipped.append(f"{pred}: {he.detail}")
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Univariate error for '{pred}': {exc}")
+            skipped.append(f"{pred}: {exc}")
 
     # ── Variable selection for multivariate ──────────────────────────────────
     sel = (req.selection or "all").strip().lower()
@@ -404,13 +415,14 @@ def logistic_or_table(req: LogisticRequest):
 
     # ── Multivariate: only selected predictors ────────────────────────────────
     multi_results: dict = {}
+    multi_error = None
     if multi_pred_list:
         try:
             multi_results = _fit_row(df[multi_pred_list], multi_pred_list)
-        except HTTPException:
-            raise
+        except HTTPException as he:
+            multi_error = he.detail
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Multivariate error: {exc}")
+            multi_error = str(exc)
 
     # ── Merge rows ────────────────────────────────────────────────────────────
     all_vars = list(dict.fromkeys(list(uni_results.keys()) + list(multi_results.keys())))
@@ -440,6 +452,7 @@ def logistic_or_table(req: LogisticRequest):
         "n_multi": len(multi_pred_list),
         "n_total": len(pred_list),
         "table": table,
+        "warnings": (skipped if skipped else []) + ([f"Multivariate: {multi_error}"] if multi_error else []),
     }
 
 
