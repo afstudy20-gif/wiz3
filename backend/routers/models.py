@@ -336,16 +336,26 @@ def logistic_or_table(req: LogisticRequest):
         unique_vals = sorted(y_num.dropna().unique())
         if set(unique_vals) - {0, 1, 0.0, 1.0}:
             raise HTTPException(status_code=422, detail=f"Logistic regression requires a binary 0/1 outcome. Found: {unique_vals[:10]}")
-        y = y_num.astype(int).values
+        y = y_num.values
+    # Drop rows where outcome is NaN
+    valid_mask = ~pd.isna(y)
+    y = np.array(y[valid_mask], dtype=int)
+    df = df.loc[valid_mask].reset_index(drop=True)
     if len(set(y)) < 2:
         raise HTTPException(status_code=422, detail="Outcome has only one unique value — needs both 0 and 1.")
 
     # Helper: fit logit and extract first non-const row OR all predictor rows
     def _fit_row(X_df, variable_names):
         X_enc = pd.get_dummies(X_df, drop_first=True).astype(float)
-        X_const = sm.add_constant(X_enc, has_constant="add")
+        # Drop rows with NaN in predictors
+        valid = X_enc.notna().all(axis=1)
+        X_clean = X_enc[valid]
+        y_clean = y[valid.values] if len(valid) == len(y) else y
+        X_const = sm.add_constant(X_clean, has_constant="add")
+        if len(X_const) < 10:
+            raise HTTPException(status_code=422, detail=f"Insufficient data after removing missing values ({len(X_const)} rows)")
         try:
-            m = sm.Logit(y, X_const).fit(disp=False, maxiter=200)
+            m = sm.Logit(y_clean, X_const).fit(disp=False, maxiter=200)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Model convergence error: {exc}")
         rows = {}
