@@ -351,6 +351,9 @@ def _extract_stats(text: str) -> List[Dict[str, Any]]:
 
 def _extract_text_from_pdf(file_bytes: bytes) -> str:
     """Extract text from PDF using pdfplumber (preferred) or PyPDF2 (fallback)."""
+    import sys
+    errors = []
+
     try:
         import pdfplumber
         text_parts = []
@@ -360,23 +363,34 @@ def _extract_text_from_pdf(file_bytes: bytes) -> str:
                 if t:
                     text_parts.append(t)
         return "\n".join(text_parts)
-    except ImportError:
-        pass
+    except ImportError as e:
+        errors.append(f"pdfplumber: {e}")
+    except Exception as e:
+        errors.append(f"pdfplumber error: {e}")
 
     # Fallback: PyPDF2
     try:
         from PyPDF2 import PdfReader
         reader = PdfReader(io.BytesIO(file_bytes))
         return "\n".join(page.extract_text() or "" for page in reader.pages)
-    except ImportError:
-        pass
+    except ImportError as e:
+        errors.append(f"PyPDF2: {e}")
+    except Exception as e:
+        errors.append(f"PyPDF2 error: {e}")
 
-    # Fallback: pdfminer
+    # Fallback: pdfminer (already installed as pdfplumber dependency)
     try:
         from pdfminer.high_level import extract_text as _pdf_extract
         return _pdf_extract(io.BytesIO(file_bytes))
-    except ImportError:
-        raise HTTPException(status_code=500, detail="PDF parsing requires pdfplumber, PyPDF2, or pdfminer. Install: pip install pdfplumber")
+    except ImportError as e:
+        errors.append(f"pdfminer: {e}")
+    except Exception as e:
+        errors.append(f"pdfminer error: {e}")
+
+    raise HTTPException(
+        status_code=500,
+        detail=f"No PDF library available. Python: {sys.executable} | Errors: {'; '.join(errors)} | Fix: pip install pdfplumber"
+    )
 
 
 def _extract_text_from_docx(file_bytes: bytes) -> str:
@@ -410,6 +424,8 @@ async def parse_article(file: UploadFile = File(...)):
             text = _extract_text_from_docx(content)
         else:  # txt
             text = content.decode("utf-8", errors="replace")
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Failed to extract text: {exc}")
 
