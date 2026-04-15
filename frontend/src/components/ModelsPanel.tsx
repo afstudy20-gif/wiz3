@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import Plot from "../PlotComponent";
 import { useStore } from "../store";
 import { runLinear, runLogistic, runKM, runCox, runLogisticTable, runRCS, runPoisson, getSparklines } from "../api";
@@ -1113,6 +1113,17 @@ export default function ModelsPanel() {
   const numCols = session.columns.filter((c) => c.kind === "numeric").map((c) => c.name);
   const allCols = session.columns.map((c) => c.name);
 
+  // Missing counts per column
+  const missingCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const col of session.columns) {
+      counts[col.name] = session.preview.filter(
+        (row) => row[col.name] === null || row[col.name] === undefined || row[col.name] === ""
+      ).length;
+    }
+    return counts;
+  }, [session.preview, session.columns]);
+
   const [model, setModel] = useState("linear");
   const [outcome, setOutcome] = useState(numCols[0] ?? "");
   const [predictors, setPredictors] = useState<string[]>([]);
@@ -1384,6 +1395,12 @@ export default function ModelsPanel() {
                           <label key={c} className="flex items-center gap-2 text-sm cursor-pointer">
                             <input type="checkbox" checked={predictors.includes(c)} onChange={() => togglePredictor(c)} className="accent-indigo-500" />
                             <span className="text-gray-700 truncate flex-1">{c}</span>
+                            {(missingCounts[c] ?? 0) > 0 && (
+                              <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-amber-100 text-amber-600 border border-amber-200 flex-shrink-0"
+                                title={`${missingCounts[c]} missing values`}>
+                                {missingCounts[c]}✕
+                              </span>
+                            )}
                             {spk && <SparklineMini data={spk.data} type={spk.type} />}
                           </label>
                         );
@@ -1397,6 +1414,12 @@ export default function ModelsPanel() {
               <div>
                 <label className="text-xs text-gray-400 block mb-1">
                   Outcome{isORTable && <span className="text-gray-400 ml-1">(binary 0/1)</span>}
+                  {(missingCounts[outcome] ?? 0) > 0 && (
+                    <span className="ml-1 text-[9px] font-bold px-1 py-0.5 rounded bg-amber-100 text-amber-600 border border-amber-200"
+                      title={`${missingCounts[outcome]} missing values in outcome`}>
+                      {missingCounts[outcome]} missing
+                    </span>
+                  )}
                 </label>
                 <select className="select w-full" value={outcome} onChange={(e) => setOutcome(e.target.value)}>
                   {allCols.map((c) => <option key={c}>{c}</option>)}
@@ -1437,6 +1460,12 @@ export default function ModelsPanel() {
                         <label className="flex items-center gap-2 text-sm cursor-pointer">
                           <input type="checkbox" checked={checked} onChange={() => togglePredictor(c)} className="accent-indigo-500" />
                           <span className="text-gray-700 truncate flex-1">{c}</span>
+                          {(missingCounts[c] ?? 0) > 0 && (
+                            <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-amber-100 text-amber-600 border border-amber-200 flex-shrink-0"
+                              title={`${missingCounts[c]} missing values`}>
+                              {missingCounts[c]}✕
+                            </span>
+                          )}
                           {spk && <SparklineMini data={spk.data} type={spk.type} />}
                         </label>
                         {showScale && (
