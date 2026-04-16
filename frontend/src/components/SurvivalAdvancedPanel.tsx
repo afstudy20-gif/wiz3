@@ -472,7 +472,14 @@ export default function SurvivalAdvancedPanel() {
             </table>
           </div>
         )}
-        {kmResult?.groups && (
+        {kmResult?.groups && (() => {
+          // Resolve group display name: custom rename > value_labels > raw value
+          const groupColMeta = columns.find((c) => c.name === kmGroup);
+          const vLabels = groupColMeta?.value_labels ?? {};
+          const resolveGroupName = (raw: string) =>
+            kmGroupLabels[raw] ?? vLabels[raw] ?? raw;
+
+          return (
           <>
             <div className="relative" ref={kmPlotRef}>
               <Plot
@@ -481,8 +488,8 @@ export default function SurvivalAdvancedPanel() {
                   y: g.curve.map((p: any) => p.survival),
                   type: "scatter", mode: "lines",
                   name: kmGroup
-                    ? `${kmCustomGroupTitle || kmGroup} = ${kmGroupLabels[String(g.group)] ?? g.group}`
-                    : (kmGroupLabels[String(g.group)] ?? String(g.group)),
+                    ? `${kmCustomGroupTitle || kmGroup} = ${resolveGroupName(String(g.group))}`
+                    : resolveGroupName(String(g.group)),
                   line: { width: traceDefaults.lineWidth, color: pal[i % pal.length] },
                 }))}
                 layout={{
@@ -536,7 +543,8 @@ export default function SurvivalAdvancedPanel() {
                 </tr></thead>
                 <tbody className="divide-y divide-gray-100">
                   {kmResult.groups.map((g: any, i: number) => {
-                    const label = kmGroupLabels[String(g.group)] ?? String(g.group);
+                    const label = resolveGroupName(String(g.group));
+                    const isRenamed = label !== String(g.group);
                     return (
                       <tr key={i} className="hover:bg-indigo-50/30 transition-colors"
                         onContextMenu={(e) => {
@@ -550,7 +558,7 @@ export default function SurvivalAdvancedPanel() {
                             <span className="w-1.5 h-1.5 rounded-full flex-shrink-0"
                               style={{ background: pal[i % pal.length] }} />
                             <span className="text-[11px] font-medium text-gray-700">{label}</span>
-                            {kmGroupLabels[String(g.group)] && (
+                            {isRenamed && (
                               <span className="text-[9px] text-gray-400">({g.group})</span>
                             )}
                           </span>
@@ -646,7 +654,8 @@ export default function SurvivalAdvancedPanel() {
               )}
             </div>
           </>
-        )}
+          );
+        })()}
       </Section>
 
       {/* ── Cox PH ── */}

@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useStore } from "../store";
 import type { ColMeta, CaseCondition, CaseOperator } from "../store";
 import api from "../api";
-import { selectCases, clearCases, getUniqueValues, renameColumn } from "../api";
+import { selectCases, clearCases, getUniqueValues, renameColumn, saveMetadata } from "../api";
 
 // ── Kind cycling ───────────────────────────────────────────────────────────────
 
@@ -390,6 +390,10 @@ export default function DataTable() {
   const [fillVal, setFillVal] = useState("");
   const ctxRef = useRef<HTMLDivElement>(null);
   const fillRef = useRef<HTMLInputElement>(null);
+
+  // Value labels editor
+  const [valueLabelCol, setValueLabelCol] = useState<string | null>(null);
+  const [valueLabelDraft, setValueLabelDraft] = useState<Record<string, string>>({});
 
   // Multi-cell selection
   const [selectedCells, setSelectedCells] = useState<Set<string>>(new Set());
@@ -1275,6 +1279,15 @@ export default function DataTable() {
             className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2">
             🏷️ Change type
           </button>
+          <button onClick={() => {
+            const col = columns.find((c) => c.name === ctxMenu.col);
+            setValueLabelDraft(col?.value_labels ? { ...col.value_labels } : {});
+            setValueLabelCol(ctxMenu.col);
+            setCtxMenu(null);
+          }}
+            className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+            🔤 Value Labels
+          </button>
           {/* Decimal places selector */}
           {columns.find((c) => c.name === ctxMenu.col)?.kind === "numeric" && (
             <div className="px-3 py-1 flex items-center gap-1.5">
@@ -1429,6 +1442,91 @@ export default function DataTable() {
           </button>
         </div>
       )}
+
+      {/* ── Value Labels Modal ── */}
+      {valueLabelCol && (() => {
+        const col = columns.find((c) => c.name === valueLabelCol);
+        // Get unique values from preview data
+        const uniqueVals = Array.from(
+          new Set(preview.map((r) => r[valueLabelCol]).filter((v) => v !== null && v !== undefined && v !== ""))
+        ).map(String).sort((a, b) => {
+          const na = Number(a), nb = Number(b);
+          return (!isNaN(na) && !isNaN(nb)) ? na - nb : a.localeCompare(b);
+        });
+
+        const handleSaveLabels = async () => {
+          // Save to store
+          const updatedCols = session.columns.map((c) =>
+            c.name === valueLabelCol ? { ...c, value_labels: { ...valueLabelDraft } } : c
+          );
+          useStore.getState().setSession({ ...session, columns: updatedCols });
+          // Save to backend
+          try {
+            await saveMetadata(session.session_id, {
+              [valueLabelCol]: { value_labels: valueLabelDraft },
+            });
+          } catch { /* ignore */ }
+          setValueLabelCol(null);
+        };
+
+        return (
+          <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center" onClick={() => setValueLabelCol(null)}>
+            <div className="bg-white rounded-xl shadow-2xl w-96 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+              {/* Header */}
+              <div className="px-5 py-3.5 border-b border-gray-200 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-800">Value Labels</h3>
+                  <p className="text-[11px] text-gray-400 mt-0.5">
+                    {valueLabelCol}
+                    {col?.kind && <span className="ml-1 text-indigo-500">({col.kind})</span>}
+                  </p>
+                </div>
+                <button onClick={() => setValueLabelCol(null)} className="text-gray-400 hover:text-gray-600 text-lg">✕</button>
+              </div>
+
+              {/* Labels list */}
+              <div className="flex-1 overflow-y-auto px-5 py-3 space-y-2">
+                {uniqueVals.length === 0 ? (
+                  <p className="text-xs text-gray-400 text-center py-4">No values found</p>
+                ) : (
+                  uniqueVals.map((val) => (
+                    <div key={val} className="flex items-center gap-2">
+                      <span className="w-14 text-xs font-mono text-gray-500 bg-gray-100 px-2 py-1 rounded text-center flex-shrink-0">
+                        {val}
+                      </span>
+                      <span className="text-gray-400 text-xs">=</span>
+                      <input
+                        className="flex-1 text-xs border border-gray-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200"
+                        placeholder={`Label for ${val}`}
+                        value={valueLabelDraft[val] ?? ""}
+                        onChange={(e) => setValueLabelDraft((prev) => ({ ...prev, [val]: e.target.value }))}
+                      />
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-5 py-3 border-t border-gray-200 flex items-center justify-between">
+                <button
+                  onClick={() => { setValueLabelDraft({}); }}
+                  className="text-xs text-gray-400 hover:text-red-500"
+                >Clear all</button>
+                <div className="flex gap-2">
+                  <button onClick={() => setValueLabelCol(null)}
+                    className="px-3 py-1.5 text-xs text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50">
+                    Cancel
+                  </button>
+                  <button onClick={handleSaveLabels}
+                    className="px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+                    Save Labels
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
