@@ -866,8 +866,9 @@ def column_summary(session_id: str, column: str, kind: Optional[str] = None):
 
     if is_num:
         s_clean = s.dropna().astype(float)
+        n_clean = len(s_clean)
         # Histogram (auto bins, max 40)
-        n_bins = min(40, max(10, int(np.sqrt(len(s_clean)))))
+        n_bins = min(40, max(10, int(np.sqrt(n_clean))))
         counts, edges = np.histogram(s_clean, bins=n_bins)
         histogram = [
             {"bin_start": float(edges[i]), "bin_end": float(edges[i+1]), "count": int(counts[i])}
@@ -879,6 +880,8 @@ def column_summary(session_id: str, column: str, kind: Optional[str] = None):
         qq = [{"x": float(theo[i]), "y": float(sample[i])} for i in range(0, len(theo), step)]
         # Normality: Shapiro-Wilk for n<50, Kolmogorov-Smirnov for n≥50
         p_norm, norm_test_name = _normality_test(s_clean)
+        mean_val = float(s_clean.mean())
+        std_val  = float(s_clean.std())
         q1, q3 = float(s_clean.quantile(0.25)), float(s_clean.quantile(0.75))
         iqr_val = q3 - q1
         # IQR-based Tukey fences
@@ -888,29 +891,53 @@ def column_summary(session_id: str, column: str, kind: Optional[str] = None):
         non_out = s_clean[(s_clean >= fence_low) & (s_clean <= fence_high)]
         whisker_low  = float(non_out.min()) if len(non_out) else float(s_clean.min())
         whisker_high = float(non_out.max()) if len(non_out) else float(s_clean.max())
-        # Outliers with 1-based row index
+        # IQR outliers with 1-based row index
         out_mask = (s_clean < fence_low) | (s_clean > fence_high)
         outliers = [
             {"row": int(idx) + 1, "value": float(val)}
             for idx, val in zip(s_clean.index[out_mask], s_clean[out_mask])
         ]
+        # Z-score extremes: values that disrupt normality (|z| > 2.5)
+        # Also compute their Q-Q plot coordinates so the frontend can overlay them.
+        z_extremes = []
+        if std_val > 0 and n_clean >= 3:
+            z_series = (s_clean - mean_val) / std_val
+            z_ext_mask = z_series.abs() > 2.5
+            s_sorted = s_clean.sort_values().values  # needed for rank
+            for idx, val in zip(s_clean.index[z_ext_mask], s_clean[z_ext_mask]):
+                z = float(z_series[idx])
+                # Rank of this value in sorted data (1-based, handling ties via 'average')
+                rank = int(np.searchsorted(s_sorted, float(val), side="left")) + 1
+                rank = max(1, min(rank, n_clean))
+                # Theoretical quantile (same formula scipy.stats.probplot uses)
+                theo_q = float(scipy_stats.norm.ppf((rank - 0.375) / (n_clean + 0.25)))
+                z_extremes.append({
+                    "row": int(idx) + 1,
+                    "value": round(float(val), 4),
+                    "z": round(z, 3),
+                    "qq_x": round(theo_q, 4),
+                })
+            # Sort by |z| descending (most extreme first)
+            z_extremes.sort(key=lambda d: abs(d["z"]), reverse=True)
         return {
             "type": "numeric",
             "n": int(s_clean.count()), "missing": int(s.isna().sum()),
-            "mean": float(s_clean.mean()), "std": float(s_clean.std()),
+            "mean": mean_val, "std": std_val,
             "median": float(s_clean.median()), "q1": q1, "q3": q3,
             "iqr": float(iqr_val), "min": float(s_clean.min()), "max": float(s_clean.max()),
             "skewness": float(s_clean.skew()), "kurtosis": float(s_clean.kurtosis()),
             "whisker_low": whisker_low, "whisker_high": whisker_high,
             "outliers": outliers,
+            "z_extremes": z_extremes,
             "histogram": histogram,
-            "raw_values": s_clean.sample(min(2000, len(s_clean)), random_state=42).tolist(),
+            "raw_values": s_clean.sample(min(2000, n_clean), random_state=42).tolist(),
             "qq": qq,
             "normality_p": float(p_norm),
             "normality_test": norm_test_name,
             "normal": bool(p_norm > 0.05),
             "normality_label": "Normally distributed" if p_norm > 0.05 else "Non-normal distribution",
         }
+
     else:
         total = len(s)
         vc = s.value_counts(dropna=False)

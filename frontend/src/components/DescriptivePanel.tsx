@@ -100,22 +100,37 @@ function NumericView({ summary }: { summary: any }) {
     `Min: ${summary.min?.toFixed(2)}  Max: ${summary.max?.toFixed(2)}<br>` +
     `Ort ± SS: ${summary.mean?.toFixed(2)} ± ${summary.std?.toFixed(2)}<extra></extra>`;
 
-  // Box from raw values — Plotly assigns x="Distribution" automatically.
-  // boxpoints:false → we draw outliers ourselves to show row numbers.
+  // ── Box trace ─────────────────────────────────────────────────────────────
+  // Give the box an EXPLICIT x category so Plotly uses a category axis.
+  // Then scatter traces with the same x value co-locate perfectly.
+  // hoverinfo:"none" kills the ugly per-stat labels Plotly shows by default.
   const boxTrace: any = {
     type: "box" as const,
+    x: rawVals.map(() => "Distribution"),   // explicit category → category axis
     y: rawVals,
     name: "Distribution",
     boxmean: true,
-    boxpoints: false as any,
+    boxpoints: false as any,                // we draw outliers ourselves
     marker: { color: P, size: 5 },
     line: { color: P },
     fillcolor: "rgba(99,102,241,0.15)",
-    hovertemplate: summaryHover,
+    hoverinfo: "none" as const,             // suppress "(Distribution, max: 85)" labels
   };
 
-  // Outlier scatter — Plotly places the box at x="Distribution" (its name),
-  // so we use the same string to co-locate outlier points on the box.
+  // ── Invisible summary hover scatter ──────────────────────────────────────
+  // Large transparent marker at median; triggers hover anywhere over the box.
+  const summaryScatter: any = {
+    type: "scatter" as const,
+    mode: "markers" as const,
+    x: ["Distribution"],
+    y: [summary.median],
+    marker: { opacity: 0.001, size: 80, color: "rgba(0,0,0,0)" },
+    hovertemplate: summaryHover,
+    showlegend: false,
+  };
+
+  // ── Outlier scatter ────────────────────────────────────────────────────────
+  // Same x category → overlaid perfectly on the box.
   const outlierTrace: any[] = outliers.length > 0 ? [{
     type: "scatter" as const,
     mode: "markers" as const,
@@ -128,7 +143,11 @@ function NumericView({ summary }: { summary: any }) {
     showlegend: false,
   }] : [];
 
-  const boxData: any[] = [boxTrace, ...outlierTrace];
+  const boxData: any[] = [boxTrace, summaryScatter, ...outlierTrace];
+
+
+  const zExtremes: { row: number; value: number; z: number; qq_x: number }[] =
+    summary.z_extremes ?? [];
 
   const qqData = [
     {
@@ -137,6 +156,7 @@ function NumericView({ summary }: { summary: any }) {
       y: summary.qq.map((p: any) => p.y),
       marker: { color: P, size: 4 },
       name: "Observed",
+      hovertemplate: "Teorik: %{x:.3f}<br>Gözlem: %{y:.3f}<extra></extra>",
     },
     (() => {
       const xs = summary.qq.map((p: any) => p.x);
@@ -148,8 +168,25 @@ function NumericView({ summary }: { summary: any }) {
         x: [xMin, xMax], y: [yMin, yMax],
         line: { color: "#9ca3af", width: 1, dash: "dash" as const },
         name: "Reference",
+        hoverinfo: "skip" as const,
       };
     })(),
+    // Z-extreme overlay: values disrupting normality (|z| > 2.5)
+    ...(zExtremes.length > 0 ? [{
+      type: "scatter" as const,
+      mode: "markers" as const,
+      x: zExtremes.map((e) => e.qq_x),
+      y: zExtremes.map((e) => e.value),
+      customdata: zExtremes.map((e) => [e.row, e.value.toFixed(4), e.z.toFixed(3)]),
+      hovertemplate:
+        "<b>Normal dağılımı bozuyor</b><br>" +
+        "Satır: %{customdata[0]}<br>" +
+        "Değer: %{customdata[1]}<br>" +
+        "z-skoru: %{customdata[2]}<extra></extra>",
+      marker: { color: "#f97316", size: 8, symbol: "diamond", line: { width: 1.5, color: "#ea580c" } },
+      name: "Z-extreme",
+      showlegend: false,
+    }] : []),
   ];
 
   return (
@@ -299,6 +336,27 @@ function NumericView({ summary }: { summary: any }) {
           style={{ width: "100%", height: 380 }}
           useResizeHandler config={{ responsive: true, displaylogo: false, displayModeBar: false }}
         />
+        {zExtremes.length > 0 && (
+          <div className="mt-2 px-3 py-2 bg-orange-50 border border-orange-200 rounded-lg">
+            <p className="text-xs font-semibold text-orange-700 mb-1">
+              🔶 {zExtremes.length} değer normal dağılımı bozuyor (|z| &gt; 2.5)
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {zExtremes.slice(0, 50).map((e) => (
+                <span
+                  key={e.row}
+                  className="inline-block text-[10px] font-mono bg-orange-100 text-orange-800 border border-orange-200 rounded px-1.5 py-0.5"
+                  title={`Satır ${e.row}: ${e.value}  (z = ${e.z})`}
+                >
+                  #{e.row} · {e.value.toFixed(2)} · z={e.z > 0 ? "+" : ""}{e.z.toFixed(2)}
+                </span>
+              ))}
+              {zExtremes.length > 50 && (
+                <span className="text-[10px] text-orange-400 italic">…ve {zExtremes.length - 50} daha</span>
+              )}
+            </div>
+          </div>
+        )}
         </div>
       )}
     </div>
