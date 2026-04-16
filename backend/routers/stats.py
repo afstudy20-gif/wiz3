@@ -880,13 +880,29 @@ def column_summary(session_id: str, column: str, kind: Optional[str] = None):
         # Normality: Shapiro-Wilk for n<50, Kolmogorov-Smirnov for n≥50
         p_norm, norm_test_name = _normality_test(s_clean)
         q1, q3 = float(s_clean.quantile(0.25)), float(s_clean.quantile(0.75))
+        iqr_val = q3 - q1
+        # IQR-based Tukey fences
+        fence_low  = q1 - 1.5 * iqr_val
+        fence_high = q3 + 1.5 * iqr_val
+        # Actual whisker ends = most-extreme non-outlier values
+        non_out = s_clean[(s_clean >= fence_low) & (s_clean <= fence_high)]
+        whisker_low  = float(non_out.min()) if len(non_out) else float(s_clean.min())
+        whisker_high = float(non_out.max()) if len(non_out) else float(s_clean.max())
+        # Outliers with 1-based row index
+        out_mask = (s_clean < fence_low) | (s_clean > fence_high)
+        outliers = [
+            {"row": int(idx) + 1, "value": float(val)}
+            for idx, val in zip(s_clean.index[out_mask], s_clean[out_mask])
+        ]
         return {
             "type": "numeric",
             "n": int(s_clean.count()), "missing": int(s.isna().sum()),
             "mean": float(s_clean.mean()), "std": float(s_clean.std()),
             "median": float(s_clean.median()), "q1": q1, "q3": q3,
-            "iqr": float(q3 - q1), "min": float(s_clean.min()), "max": float(s_clean.max()),
+            "iqr": float(iqr_val), "min": float(s_clean.min()), "max": float(s_clean.max()),
             "skewness": float(s_clean.skew()), "kurtosis": float(s_clean.kurtosis()),
+            "whisker_low": whisker_low, "whisker_high": whisker_high,
+            "outliers": outliers,
             "histogram": histogram,
             "raw_values": s_clean.sample(min(2000, len(s_clean)), random_state=42).tolist(),
             "qq": qq,

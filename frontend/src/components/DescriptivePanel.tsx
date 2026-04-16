@@ -89,26 +89,42 @@ function NumericView({ summary }: { summary: any }) {
     customdata: summary.histogram.map((b: any) => [b.bin_start.toFixed(2), b.bin_end.toFixed(2)]),
   }];
 
-  const boxData = [{
-    type: "box" as const,
-    q1: [summary.q1],
-    median: [summary.median],
-    mean: [summary.mean],
-    q3: [summary.q3],
-    lowerfence: [summary.min],
-    upperfence: [summary.max],
-    sd: [summary.std],
-    name: "Distribution",
-    boxmean: true,
-    marker: { color: P, size: 5 },
-    line: { color: P },
-    fillcolor: "rgba(99,102,241,0.15)",
-    hovertemplate:
-      `Median: ${summary.median?.toFixed(2)}<br>` +
-      `Q1: ${summary.q1?.toFixed(2)}  Q3: ${summary.q3?.toFixed(2)}<br>` +
-      `Min: ${summary.min?.toFixed(2)}  Max: ${summary.max?.toFixed(2)}<br>` +
-      `Mean ± SD: ${summary.mean?.toFixed(2)} ± ${summary.std?.toFixed(2)}<extra></extra>`,
-  }];
+  const outliers: { row: number; value: number }[] = summary.outliers ?? [];
+  const boxData: any[] = [
+    {
+      type: "box" as const,
+      q1: [summary.q1],
+      median: [summary.median],
+      mean: [summary.mean],
+      q3: [summary.q3],
+      lowerfence: [summary.whisker_low ?? (summary.q1 - 1.5 * summary.iqr)],
+      upperfence: [summary.whisker_high ?? (summary.q3 + 1.5 * summary.iqr)],
+      sd: [summary.std],
+      name: "Distribution",
+      boxmean: true,
+      marker: { color: P, size: 5 },
+      line: { color: P },
+      fillcolor: "rgba(99,102,241,0.15)",
+      hovertemplate:
+        `Median: ${summary.median?.toFixed(2)}<br>` +
+        `Q1: ${summary.q1?.toFixed(2)}  Q3: ${summary.q3?.toFixed(2)}<br>` +
+        `Min: ${summary.min?.toFixed(2)}  Max: ${summary.max?.toFixed(2)}<br>` +
+        `Mean ± SD: ${summary.mean?.toFixed(2)} ± ${summary.std?.toFixed(2)}<extra></extra>`,
+    },
+    // Outlier scatter — drawn on top so row numbers are visible in hover
+    ...(outliers.length > 0 ? [{
+      type: "scatter" as const,
+      mode: "markers" as const,
+      // x must match the box plot category string
+      x: outliers.map(() => "Distribution"),
+      y: outliers.map((o) => o.value),
+      customdata: outliers.map((o) => [o.row, o.value.toFixed(4)]),
+      hovertemplate: "<b>Outlier</b><br>Satır: %{customdata[0]}<br>Değer: %{customdata[1]}<extra></extra>",
+      marker: { color: "#ef4444", size: 7, symbol: "circle-open", line: { width: 2, color: "#ef4444" } },
+      name: "Outlier",
+      showlegend: false,
+    }] : []),
+  ];
 
   const qqData = [
     {
@@ -182,7 +198,8 @@ function NumericView({ summary }: { summary: any }) {
               {
                 x: 0.5, y: 1.0,
                 xref: "paper" as const, yref: "paper" as const,
-                text: `IQR = ${summary.iqr?.toFixed(2)}  ·  Skew = ${summary.skewness?.toFixed(3)}`,
+                text: `IQR = ${summary.iqr?.toFixed(2)}  ·  Skew = ${summary.skewness?.toFixed(3)}` +
+                      (outliers.length > 0 ? `  ·  <b style="color:#ef4444">${outliers.length} outlier</b>` : ""),
                 showarrow: false,
                 font: { color: "#6b7280", size: 11 },
                 xanchor: "center" as const,
@@ -193,6 +210,27 @@ function NumericView({ summary }: { summary: any }) {
           style={{ width: "100%", height: 380 }}
           useResizeHandler config={{ responsive: true, displaylogo: false, displayModeBar: false }}
         />
+        {outliers.length > 0 && (
+          <div className="mt-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
+            <p className="text-xs font-semibold text-red-600 mb-1">
+              ⚠️ {outliers.length} outlier (IQR × 1.5 kuralı)
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {outliers.slice(0, 50).map((o) => (
+                <span
+                  key={o.row}
+                  className="inline-block text-[10px] font-mono bg-red-100 text-red-700 border border-red-200 rounded px-1.5 py-0.5"
+                  title={`Satır ${o.row}: ${o.value}`}
+                >
+                  #{o.row} · {o.value.toFixed(2)}
+                </span>
+              ))}
+              {outliers.length > 50 && (
+                <span className="text-[10px] text-red-400 italic">…ve {outliers.length - 50} daha</span>
+              )}
+            </div>
+          </div>
+        )}
         </div>
       )}
 
