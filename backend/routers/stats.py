@@ -897,28 +897,43 @@ def column_summary(session_id: str, column: str, kind: Optional[str] = None):
             {"row": int(idx) + 1, "value": float(val)}
             for idx, val in zip(s_clean.index[out_mask], s_clean[out_mask])
         ]
-        # Z-score extremes: values that disrupt normality (|z| > 2.5)
-        # Also compute their Q-Q plot coordinates so the frontend can overlay them.
+        # Z-score extremes and Normality deviants
         z_extremes = []
+        normality_deviants = []
         if std_val > 0 and n_clean >= 3:
             z_series = (s_clean - mean_val) / std_val
-            z_ext_mask = z_series.abs() > 2.5
-            s_sorted = s_clean.sort_values().values  # needed for rank
-            for idx, val in zip(s_clean.index[z_ext_mask], s_clean[z_ext_mask]):
-                z = float(z_series[idx])
-                # Rank of this value in sorted data (1-based, handling ties via 'average')
-                rank = int(np.searchsorted(s_sorted, float(val), side="left")) + 1
-                rank = max(1, min(rank, n_clean))
-                # Theoretical quantile (same formula scipy.stats.probplot uses)
+            s_sorted_idx = s_clean.sort_values().index
+            s_sorted_vals = s_clean.loc[s_sorted_idx].values
+            
+            # Calculate theoretical positions and residuals for all points
+            all_points_info = []
+            for i, idx in enumerate(s_sorted_idx):
+                val = float(s_sorted_vals[i])
+                rank = i + 1
                 theo_q = float(scipy_stats.norm.ppf((rank - 0.375) / (n_clean + 0.25)))
-                z_extremes.append({
+                expected_val = mean_val + std_val * theo_q
+                residual = val - expected_val
+                z = float(z_series[idx])
+                
+                info = {
                     "row": int(idx) + 1,
-                    "value": round(float(val), 4),
+                    "value": round(val, 4),
                     "z": round(z, 3),
-                    "qq_x": round(theo_q, 4),
-                })
-            # Sort by |z| descending (most extreme first)
+                    "residual": round(residual, 4),
+                    "abs_residual": abs(residual),
+                    "qq_x": round(theo_q, 4)
+                }
+                all_points_info.append(info)
+                if abs(z) > 2.0:
+                    z_extremes.append(info)
+            
+            # Sort by absolute residual to find points most responsible for non-normality
+            all_points_info.sort(key=lambda d: d["abs_residual"], reverse=True)
+            normality_deviants = all_points_info[:10]  # Top 10 worst offenders
+            
+            # Sort z_extremes by |z| desc
             z_extremes.sort(key=lambda d: abs(d["z"]), reverse=True)
+
         return {
             "type": "numeric",
             "n": int(s_clean.count()), "missing": int(s.isna().sum()),
@@ -929,6 +944,7 @@ def column_summary(session_id: str, column: str, kind: Optional[str] = None):
             "whisker_low": whisker_low, "whisker_high": whisker_high,
             "outliers": outliers,
             "z_extremes": z_extremes,
+            "normality_deviants": normality_deviants,
             "histogram": histogram,
             "raw_values": s_clean.sample(min(2000, n_clean), random_state=42).tolist(),
             "qq": qq,

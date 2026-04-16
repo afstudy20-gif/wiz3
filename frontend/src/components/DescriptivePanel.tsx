@@ -148,6 +148,8 @@ function NumericView({ summary }: { summary: any }) {
 
   const zExtremes: { row: number; value: number; z: number; qq_x: number }[] =
     summary.z_extremes ?? [];
+  const normalityDeviants: { row: number; value: number; z: number; qq_x: number; abs_residual: number }[] =
+    summary.normality_deviants ?? [];
 
   const qqData = [
     {
@@ -171,20 +173,26 @@ function NumericView({ summary }: { summary: any }) {
         hoverinfo: "skip" as const,
       };
     })(),
-    // Z-extreme overlay: values disrupting normality (|z| > 2.5)
-    ...(zExtremes.length > 0 ? [{
+    // Normality deviants overlay (The ones that trigger the "Non-normal" warning)
+    ...(normalityDeviants.length > 0 ? [{
       type: "scatter" as const,
       mode: "markers" as const,
-      x: zExtremes.map((e) => e.qq_x),
-      y: zExtremes.map((e) => e.value),
-      customdata: zExtremes.map((e) => [e.row, e.value.toFixed(4), e.z.toFixed(3)]),
+      x: normalityDeviants.map((e) => e.qq_x),
+      y: normalityDeviants.map((e) => e.value),
+      customdata: normalityDeviants.map((e) => [e.row, e.value.toFixed(4), e.z.toFixed(3)]),
       hovertemplate:
-        "<b>Normal dağılımı bozuyor</b><br>" +
+        "<b>Normalliği bozuyor</b><br>" +
         "Satır: %{customdata[0]}<br>" +
         "Değer: %{customdata[1]}<br>" +
         "z-skoru: %{customdata[2]}<extra></extra>",
-      marker: { color: "#f97316", size: 8, symbol: "diamond", line: { width: 1.5, color: "#ea580c" } },
-      name: "Z-extreme",
+      marker: { 
+        color: "#f97316", 
+        size: 8, 
+        symbol: "diamond", 
+        line: { width: 1, color: "#ea580c" },
+        opacity: 0.8
+      },
+      name: "Deviant",
       showlegend: false,
     }] : []),
   ];
@@ -336,24 +344,30 @@ function NumericView({ summary }: { summary: any }) {
           style={{ width: "100%", height: 380 }}
           useResizeHandler config={{ responsive: true, displaylogo: false, displayModeBar: false }}
         />
-        {zExtremes.length > 0 && (
-          <div className="mt-2 px-3 py-2 bg-orange-50 border border-orange-200 rounded-lg">
-            <p className="text-xs font-semibold text-orange-700 mb-1">
-              🔶 {zExtremes.length} değer normal dağılımı bozuyor (|z| &gt; 2.5)
+        {/* List of most deviating values (The ones responsible for Non-normal label) */}
+        {!summary.normal && normalityDeviants.length > 0 && (
+          <div className="mt-2 px-3 py-2 bg-orange-50 border border-orange-100 rounded-lg">
+            <p className="text-xs font-semibold text-orange-700 mb-2 flex items-center gap-1">
+              <span>🔶 Normalliği En Çok Bozan Değerler (Q-Q Sapması)</span>
+              <span className="font-normal text-[10px] text-orange-400">(Dağılımın neden normal olmadığını gösterir)</span>
             </p>
-            <div className="flex flex-wrap gap-1">
-              {zExtremes.slice(0, 50).map((e) => (
-                <span
+            <div className="flex flex-wrap gap-1.5">
+              {normalityDeviants.map((e) => (
+                <div
                   key={e.row}
-                  className="inline-block text-[10px] font-mono bg-orange-100 text-orange-800 border border-orange-200 rounded px-1.5 py-0.5"
-                  title={`Satır ${e.row}: ${e.value}  (z = ${e.z})`}
+                  className="group relative flex items-center gap-1 text-[10px] font-mono bg-white text-orange-800 border border-orange-200 rounded px-2 py-0.5 shadow-sm hover:border-orange-400 transition-all"
                 >
-                  #{e.row} · {e.value.toFixed(2)} · z={e.z > 0 ? "+" : ""}{e.z.toFixed(2)}
-                </span>
+                  <span className="text-orange-400 font-bold">#{e.row}</span>
+                  <span className="w-px h-2.5 bg-orange-100 mx-0.5"></span>
+                  <span className="font-semibold">{e.value.toFixed(2)}</span>
+                  <span className="text-[9px] text-orange-400 ml-0.5">z={e.z > 0 ? "+" : ""}{e.z.toFixed(2)}</span>
+                  
+                  {/* Tooltip on hover */}
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block bg-gray-800 text-white text-[9px] px-2 py-1 rounded whitespace-nowrap z-10">
+                    Satır {e.row} | Sapma: {e.abs_residual.toFixed(3)}
+                  </div>
+                </div>
               ))}
-              {zExtremes.length > 50 && (
-                <span className="text-[10px] text-orange-400 italic">…ve {zExtremes.length - 50} daha</span>
-              )}
             </div>
           </div>
         )}
