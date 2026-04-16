@@ -55,7 +55,7 @@ function Sparkline({ spark }: { spark: SparkData }) {
 
 interface NormalityDeviant { row: number; value: number; z: number; abs_residual: number; }
 
-function NormalityDeviants({ deviants }: { deviants: NormalityDeviant[] }) {
+function NormalityDeviants({ deviants, onDelete }: { deviants: NormalityDeviant[]; onDelete: () => void }) {
   const [contextMenu, setContextMenu] = useState<{ row: number; x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -67,7 +67,8 @@ function NormalityDeviants({ deviants }: { deviants: NormalityDeviant[] }) {
   const handleDeleteRow = async (row: number) => {
     try {
       await useStore.getState().deleteRow(row);
-      import("../api").then((api) => api.refreshSession(useStore.getState().session!.session_id));
+      // Refresh the stats immediately
+      onDelete();
     } catch (err) {
       console.error("Error deleting row:", err);
     }
@@ -101,7 +102,7 @@ function NormalityDeviants({ deviants }: { deviants: NormalityDeviant[] }) {
             onClick={async () => {
               try {
                 await useStore.getState().deleteRow(e.row);
-                import("../api").then((api) => api.refreshSession(useStore.getState().session!.session_id));
+                onDelete();
               } catch (err) {}
             }}
             onContextMenu={(ev) => handleContextMenu(ev, e.row)}
@@ -167,7 +168,7 @@ const CHART_TABS = [
 ] as const;
 type ChartTab = typeof CHART_TABS[number]["id"];
 
-function NumericView({ summary }: { summary: any }) {
+function NumericView({ summary, loadSummary, selected }: { summary: any; loadSummary: (col: string) => void; selected: string }) {
   const chartTab = useStore((s) => s.descriptiveTab);
   const setChartTab = useStore((s) => s.setDescriptiveTab);
   const showGrid = useStore((s) => s.showGrid);
@@ -450,7 +451,7 @@ function NumericView({ summary }: { summary: any }) {
         />
         {/* List of most deviating values (The ones responsible for Non-normal label) */}
         {!summary.normal && normalityDeviants.length > 0 && (
-          <NormalityDeviants deviants={normalityDeviants} />
+          <NormalityDeviants deviants={normalityDeviants} onDelete={() => loadSummary(selected)} />
         )}
         </div>
       )}
@@ -1064,7 +1065,7 @@ export default function DescriptivePanel() {
 
                 {/* Charts */}
                 <div className="flex-1 overflow-y-auto p-4">
-                  {summary.type === "numeric" && <NumericView summary={summary} />}
+                  {summary.type === "numeric" && <NumericView summary={summary} loadSummary={loadSummary} selected={selected} />}
                   {summary.type === "categorical" && <CategoricalView summary={summary} />}
                 </div>
               </>
