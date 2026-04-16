@@ -77,7 +77,7 @@ function SaveBeforeOpenModal({
   onCancel,
 }: {
   session: { filename: string; columns: { name: string }[]; preview: Record<string, unknown>[] };
-  onSave: (fmt: "csv" | "xlsx") => void;
+  onSave: (fmt: "csv" | "xlsx" | "json") => void;
   onSkip: () => void;
   onCancel: () => void;
 }) {
@@ -89,7 +89,7 @@ function SaveBeforeOpenModal({
           Do you want to save <strong>{session.filename}</strong> before opening a new file?
         </p>
         <div className="flex flex-col gap-2">
-          <div className="flex gap-2">
+          <div className="flex gap-3">
             <button
               onClick={() => onSave("csv")}
               className="flex-1 btn-primary text-sm py-2"
@@ -101,6 +101,12 @@ function SaveBeforeOpenModal({
               className="flex-1 btn-primary text-sm py-2"
             >
               Save as XLSX
+            </button>
+            <button
+              onClick={() => onSave("json")}
+              className="flex-1 btn-primary text-sm py-2"
+            >
+              Save Session
             </button>
           </div>
           <button
@@ -215,10 +221,14 @@ export default function App() {
 
   const handleOpenNew = () => setShowSaveModal(true);
 
-  const handleSave = (fmt: "csv" | "xlsx") => {
+  const handleSave = (fmt: "csv" | "xlsx" | "json") => {
     if (!session) return;
-    // Trigger download synchronously — no async, no popup blocker issues
-    triggerDownload(session.session_id, fmt, session.filename);
+    if (fmt === "json") {
+      // Session JSON — use the save_session endpoint directly
+      window.location.assign(`/api/sessions/${session.session_id}/save_session`);
+    } else {
+      triggerDownload(session.session_id, fmt, session.filename);
+    }
     // Give browser time to start the download before clearing
     setTimeout(() => {
       setShowSaveModal(false);
