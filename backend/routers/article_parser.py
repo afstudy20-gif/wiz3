@@ -133,6 +133,52 @@ _CI_STANDALONE = re.compile(
     re.IGNORECASE
 )
 
+# Cronbach's alpha: many PDF formats including no-space variants
+# "Cronbach's alpha = 0.82" / "alpha 0.82" / "alphavaluewasfoundtobe0.617" / "Total 0.617"
+_CRONBACH = re.compile(
+    r"(?:Cronbach['\u2019]?s?\s*)?(?:alpha|\u03B1)\s*(?:value\s*)?(?:=|was|of|:|coefficient\s*(?:=|was|of|:)?|was\s*found\s*to\s*be)?\s*(0\.\d+)",
+    re.IGNORECASE
+)
+
+# KMO: KMO = 0.689 / Kaiser-Meyer-Olkin = 0.82
+_KMO = re.compile(
+    r'(?:KMO|Kaiser[\s-]*Meyer[\s-]*Olkin)\s*(?:=|was|of|:)\s*([\d.]+)',
+    re.IGNORECASE
+)
+
+# ICC: ICC = 0.85 / intraclass correlation = 0.90
+_ICC = re.compile(
+    r'(?:ICC|[Ii]ntraclass\s+[Cc]orrelation)\s*(?:=|was|of|:)\s*([\d.]+)',
+    re.IGNORECASE
+)
+
+# R-squared: R² = 0.45 / R2 = 0.45 / adjusted R² = 0.42
+_R_SQUARED = re.compile(
+    r'(?:adjusted\s+)?R\s*[²2]\s*(?:=|was|of)\s*([\d.]+)',
+    re.IGNORECASE
+)
+
+# CFA fit indices — use findall to get ALL numbers after the index name, then pick the best
+_CFA_INDEX_NAME = re.compile(r'\b(RMSEA|GFI|AGFI|CFI|TLI|NNFI|SRMR|IFI)\b', re.IGNORECASE)
+
+# Chi-square/df ratio: χ²/df = 1.564 / chi2/df = 2.3 / c2/df 1.564
+_CHI2_DF = re.compile(
+    r'(?:\u03C7|\u03A7|chi|c)\s*[²2]?\s*/\s*df\s*(?:=|was|of|:|\s)\s*([\d.]+)',
+    re.IGNORECASE
+)
+
+# Cohen's kappa: κ = 0.72 / kappa = 0.72
+_KAPPA = re.compile(
+    r'(?:\u03BA|kappa|Cohen[\'s]*\s+kappa)\s*(?:=|was|of|:)\s*([\d.]+)',
+    re.IGNORECASE
+)
+
+# Sensitivity/Specificity: sensitivity = 85% / specificity 92%
+_SENS_SPEC = re.compile(
+    r'(?:sensitivity|specificity)\s*(?:=|was|of|:)\s*([\d.]+)\s*%?',
+    re.IGNORECASE
+)
+
 
 def _parse_p(p_str: str) -> float:
     """Parse p-value string like '<0.001' or '0.023' or '0. 001'."""
@@ -357,6 +403,123 @@ def _extract_stats(text: str) -> List[Dict[str, Any]]:
                 "statistic": round(auc_val, 4),
                 "source": m.group(0).strip(),
             })
+
+    # Cronbach's alpha
+    for m in _CRONBACH.finditer(text):
+        try:
+            val = _clean_num(m.group(1))
+            if 0 < val <= 1:
+                findings.append({
+                    "type": "reliability",
+                    "test_label": "Cronbach's α",
+                    "statistic": round(val, 4),
+                    "source": m.group(0).strip(),
+                })
+        except (ValueError, TypeError):
+            pass
+
+    # KMO
+    for m in _KMO.finditer(text):
+        try:
+            val = _clean_num(m.group(1))
+            if 0 < val <= 1:
+                findings.append({
+                    "type": "kmo",
+                    "test_label": "KMO",
+                    "statistic": round(val, 4),
+                    "source": m.group(0).strip(),
+                })
+        except (ValueError, TypeError):
+            pass
+
+    # ICC
+    for m in _ICC.finditer(text):
+        try:
+            val = _clean_num(m.group(1))
+            if 0 < val <= 1:
+                findings.append({
+                    "type": "icc",
+                    "test_label": "ICC",
+                    "power_test": "correlation",
+                    "effect_size": round(val, 4),
+                    "effect_label": "ICC",
+                    "statistic": round(val, 4),
+                    "source": m.group(0).strip(),
+                })
+        except (ValueError, TypeError):
+            pass
+
+    # R-squared
+    for m in _R_SQUARED.finditer(text):
+        try:
+            val = _clean_num(m.group(1))
+            if 0 < val < 1:
+                # Cohen's f² = R²/(1-R²), then f = sqrt(f²)
+                f2 = val / (1 - val)
+                findings.append({
+                    "type": "r_squared",
+                    "test_label": "R²",
+                    "power_test": "anova",
+                    "statistic": round(val, 4),
+                    "effect_size": round(math.sqrt(f2), 4),
+                    "effect_label": "Cohen's f",
+                    "source": m.group(0).strip(),
+                })
+        except (ValueError, TypeError):
+            pass
+
+    # CFA fit indices — find the index name, then extract the LAST number
+    # in the surrounding context (which is the actual result, not comparison range)
+    seen_indices = set()
+    for m in _CFA_INDEX_NAME.finditer(text):
+        try:
+            index_name = m.group(1).upper()
+            if index_name in seen_indices:
+                continue
+            # Get the text chunk after this index name until newline or next index
+            after = text[m.end():m.end()+80]
+            after_line = after.split("\n")[0]
+            # Find all numbers in this chunk
+            nums = re.findall(r'(0\.\d{2,}|1\.0\d*)', after_line)
+            if nums:
+                val = float(nums[-1])  # last number is usually the actual value
+                if 0 < val <= 2.0:
+                    seen_indices.add(index_name)
+                    findings.append({
+                        "type": "fit_index",
+                        "test_label": index_name,
+                        "statistic": round(val, 4),
+                        "source": f"{index_name} {val}",
+                    })
+        except (ValueError, TypeError):
+            pass
+
+    # Chi-square/df ratio
+    for m in _CHI2_DF.finditer(text):
+        try:
+            val = _clean_num(m.group(1))
+            findings.append({
+                "type": "fit_index",
+                "test_label": "χ²/df",
+                "statistic": round(val, 4),
+                "source": m.group(0).strip(),
+            })
+        except (ValueError, TypeError):
+            pass
+
+    # Cohen's kappa
+    for m in _KAPPA.finditer(text):
+        try:
+            val = _clean_num(m.group(1))
+            if 0 < val <= 1:
+                findings.append({
+                    "type": "kappa",
+                    "test_label": "Cohen's κ",
+                    "statistic": round(val, 4),
+                    "source": m.group(0).strip(),
+                })
+        except (ValueError, TypeError):
+            pass
 
     # Beta coefficients: β = 0.45, p = 0.012
     for m in _BETA.finditer(text):
