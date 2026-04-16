@@ -176,6 +176,9 @@ export default function SurvivalAdvancedPanel() {
   const [kmLoading, setKmLoading] = useState(false);
   const [kmError, setKmError] = useState<string | null>(null);
   const kmPlotRef = useRef<any>(null);
+  // KM screening state
+  const [kmScanResult, setKmScanResult] = useState<any[]>([]);
+  const [kmScanLoading, setKmScanLoading] = useState(false);
 
   // Cox state
   const [coxDuration, setCoxDuration] = useState("");
@@ -184,6 +187,9 @@ export default function SurvivalAdvancedPanel() {
   const [coxResult, setCoxResult] = useState<any>(null);
   const [coxLoading, setCoxLoading] = useState(false);
   const [coxError, setCoxError] = useState<string | null>(null);
+  // Cox univariable screening state
+  const [coxScanResult, setCoxScanResult] = useState<any[]>([]);
+  const [coxScanLoading, setCoxScanLoading] = useState(false);
 
   // Landmark state
   const [lmDuration, setLmDuration] = useState("");
@@ -507,7 +513,7 @@ export default function SurvivalAdvancedPanel() {
           <VarSelect label="Event (0/1)" value={kmEvent} onChange={setKmEvent} columns={columns} />
           <VarSelect label="Group (optional)" value={kmGroup} onChange={setKmGroup} columns={columns} kinds={["categorical"]} />
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <RunButton onClick={async () => {
             if (!kmDuration || !kmEvent) { setKmError("Select duration and event columns"); return; }
             setKmLoading(true); setKmError(null);
@@ -517,8 +523,77 @@ export default function SurvivalAdvancedPanel() {
             } catch (e: any) { setKmError(e?.response?.data?.detail ?? "KM failed"); }
             finally { setKmLoading(false); }
           }} loading={kmLoading} label="Run Kaplan-Meier" />
+
+          {/* Log-rank screening button */}
+          {kmDuration && kmEvent && (
+            <button
+              disabled={kmScanLoading}
+              onClick={async () => {
+                const catCols = columns.filter((c) => c.kind === "categorical").map((c) => c.name);
+                if (catCols.length === 0) return;
+                setKmScanLoading(true);
+                const results: any[] = [];
+                for (const col of catCols) {
+                  try {
+                    const res = await runKM({ session_id: sid, duration_col: kmDuration, event_col: kmEvent, group_col: col });
+                    results.push({
+                      variable: col,
+                      groups: res.data.groups?.length ?? 0,
+                      logrank_p: res.data.logrank?.p ?? null,
+                      chi2: res.data.logrank?.chi2 ?? null,
+                    });
+                  } catch { results.push({ variable: col, groups: null, logrank_p: null, chi2: null }); }
+                }
+                results.sort((a, b) => (a.logrank_p ?? 1) - (b.logrank_p ?? 1));
+                setKmScanResult(results);
+                setKmScanLoading(false);
+              }}
+              className="px-3 py-1.5 text-xs font-medium border border-indigo-300 text-indigo-600 rounded-lg hover:bg-indigo-50 disabled:opacity-50 transition-colors"
+            >
+              {kmScanLoading ? "Taranıyor…" : "🔍 Log-rank Tarama"}
+            </button>
+          )}
           {kmError && <p className="text-xs text-red-500">{kmError}</p>}
         </div>
+
+        {/* KM scan results */}
+        {kmScanResult.length > 0 && (
+          <div className="rounded-lg border border-gray-200 overflow-auto">
+            <div className="bg-gray-50 px-3 py-2 border-b border-gray-200 flex items-center justify-between">
+              <p className="text-xs font-semibold text-gray-600">Log-rank Tarama — Tüm Kategorik Değişkenler</p>
+              <button onClick={() => setKmScanResult([])} className="text-[10px] text-gray-400 hover:text-red-500">✕ Kapat</button>
+            </div>
+            <table className="text-xs w-full">
+              <thead><tr className="bg-gray-50">
+                <th className="px-3 py-1.5 text-left text-gray-500">Değişken</th>
+                <th className="px-3 py-1.5 text-left text-gray-500">Grup sayısı</th>
+                <th className="px-3 py-1.5 text-left text-gray-500">χ²</th>
+                <th className="px-3 py-1.5 text-left text-gray-500">Log-rank p</th>
+                <th className="px-3 py-1.5 text-left text-gray-500"></th>
+              </tr></thead>
+              <tbody>
+                {kmScanResult.map((r, i) => (
+                  <tr key={i} className={`border-t border-gray-100 ${r.logrank_p !== null && r.logrank_p < 0.05 ? "bg-indigo-50" : ""}`}>
+                    <td className="px-3 py-1 font-medium text-gray-700">{r.variable}</td>
+                    <td className="px-3 py-1 text-gray-500">{r.groups ?? "—"}</td>
+                    <td className="px-3 py-1 text-gray-500">{r.chi2 != null ? r.chi2.toFixed(3) : "—"}</td>
+                    <td className={`px-3 py-1 font-semibold ${r.logrank_p !== null && r.logrank_p < 0.05 ? "text-indigo-700" : "text-gray-500"}`}>
+                      {r.logrank_p !== null ? (r.logrank_p < 0.001 ? "<0.001" : r.logrank_p.toFixed(4)) : "hata"}
+                    </td>
+                    <td className="px-3 py-1">
+                      {r.logrank_p !== null && r.logrank_p < 0.05 && (
+                        <button onClick={() => { setKmGroup(r.variable); setKmScanResult([]); }}
+                          className="text-[10px] text-indigo-500 hover:text-indigo-700 underline">
+                          Grafiğe ekle
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
         {kmResult?.groups && (
           <>
             <div className="relative" ref={kmPlotRef}>
@@ -611,7 +686,7 @@ export default function SurvivalAdvancedPanel() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <RunButton onClick={async () => {
             if (!coxDuration || !coxEvent || coxPreds.length === 0) { setCoxError("Select duration, event, and at least one predictor"); return; }
             setCoxLoading(true); setCoxError(null);
@@ -621,8 +696,80 @@ export default function SurvivalAdvancedPanel() {
             } catch (e: any) { setCoxError(e?.response?.data?.detail ?? "Cox failed"); }
             finally { setCoxLoading(false); }
           }} loading={coxLoading} label="Run Cox Regression" />
+
+          {/* Univariable screening button */}
+          {coxDuration && coxEvent && coxPreds.length > 0 && (
+            <button
+              disabled={coxScanLoading}
+              onClick={async () => {
+                setCoxScanLoading(true);
+                const results: any[] = [];
+                for (const pred of coxPreds) {
+                  try {
+                    const res = await runCox({ session_id: sid, duration_col: coxDuration, event_col: coxEvent, predictors: [pred] });
+                    const coef = res.data.coefficients?.[0];
+                    results.push({
+                      variable: pred,
+                      hr: coef?.hr ?? null,
+                      hr_ci_low: coef?.hr_ci_low ?? null,
+                      hr_ci_high: coef?.hr_ci_high ?? null,
+                      p: coef?.p ?? null,
+                      n: res.data.n ?? null,
+                    });
+                  } catch { results.push({ variable: pred, hr: null, hr_ci_low: null, hr_ci_high: null, p: null, n: null }); }
+                }
+                results.sort((a, b) => (a.p ?? 1) - (b.p ?? 1));
+                setCoxScanResult(results);
+                setCoxScanLoading(false);
+              }}
+              className="px-3 py-1.5 text-xs font-medium border border-indigo-300 text-indigo-600 rounded-lg hover:bg-indigo-50 disabled:opacity-50 transition-colors"
+            >
+              {coxScanLoading ? "Taranıyor…" : "🔍 Univariable Tarama"}
+            </button>
+          )}
           {coxError && <p className="text-xs text-red-500">{coxError}</p>}
         </div>
+
+        {/* Cox univariable scan results */}
+        {coxScanResult.length > 0 && (
+          <div className="rounded-lg border border-gray-200 overflow-auto">
+            <div className="bg-gray-50 px-3 py-2 border-b border-gray-200 flex items-center justify-between">
+              <p className="text-xs font-semibold text-gray-600">Univariable Cox Tarama — Her Değişken Ayrı Ayrı</p>
+              <button onClick={() => setCoxScanResult([])} className="text-[10px] text-gray-400 hover:text-red-500">✕ Kapat</button>
+            </div>
+            <table className="text-xs w-full">
+              <thead><tr className="bg-gray-50">
+                <th className="px-3 py-1.5 text-left text-gray-500">Değişken</th>
+                <th className="px-3 py-1.5 text-left text-gray-500">N (events)</th>
+                <th className="px-3 py-1.5 text-left text-gray-500">HR</th>
+                <th className="px-3 py-1.5 text-left text-gray-500">95% CI</th>
+                <th className="px-3 py-1.5 text-left text-gray-500">p</th>
+              </tr></thead>
+              <tbody>
+                {coxScanResult.map((r, i) => (
+                  <tr key={i} className={`border-t border-gray-100 ${r.p !== null && r.p < 0.05 ? "bg-indigo-50" : ""}`}>
+                    <td className="px-3 py-1 font-medium text-gray-700">{r.variable}</td>
+                    <td className="px-3 py-1 text-gray-500">{r.n ?? "—"}</td>
+                    <td className="px-3 py-1 font-semibold text-gray-800">{r.hr != null ? r.hr.toFixed(3) : "—"}</td>
+                    <td className="px-3 py-1 text-gray-500">
+                      {r.hr_ci_low != null ? `${r.hr_ci_low.toFixed(3)} – ${r.hr_ci_high.toFixed(3)}` : "—"}
+                    </td>
+                    <td className={`px-3 py-1 font-semibold ${r.p !== null && r.p < 0.05 ? "text-indigo-700" : "text-gray-500"}`}>
+                      {r.p !== null ? (r.p < 0.001 ? "<0.001" : r.p.toFixed(4)) : "hata"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-gray-200 bg-amber-50">
+                  <td colSpan={5} className="px-3 py-1.5 text-[10px] text-amber-700">
+                    💡 p &lt; 0.10 olan değişkenleri multivariable Cox modeline ekle
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
 
         {coxResult?.coefficients && (
           <div className="overflow-auto rounded-lg border border-gray-200">
