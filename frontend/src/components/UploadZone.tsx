@@ -101,11 +101,11 @@ export default function UploadZone() {
         onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
-        className={`w-full max-w-lg border-2 border-dashed rounded-2xl p-16 flex flex-col items-center gap-4 transition-colors cursor-pointer
+        className={`w-full max-w-lg border-2 border-dashed rounded-2xl px-8 py-8 flex flex-col items-center gap-2 transition-colors cursor-pointer
           ${dragging ? "border-indigo-500 bg-indigo-50" : "border-gray-300 hover:border-gray-400 bg-white"}`}
         onClick={() => document.getElementById("file-input")?.click()}
       >
-        <Upload size={40} className="text-gray-400" />
+        <Upload size={28} className="text-gray-400" />
         <div className="text-center">
           <p className="text-gray-700 font-medium">Drop your data file here</p>
           <p className="text-gray-400 text-sm mt-1">or click to browse</p>
