@@ -422,25 +422,39 @@ def dunn_test(groups: dict[str, np.ndarray], correction: str = "holm") -> list[d
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def check_normality(x: np.ndarray, label: str = "Sample") -> dict:
-    """Test normality and return assumption check dict."""
+    """Test normality using the appropriate test for sample size.
+
+    Tier 1: n < 50  → Shapiro-Wilk (most powerful for small samples)
+    Tier 2: 50 ≤ n ≤ 2000 → Kolmogorov-Smirnov with Lilliefors correction
+    Tier 3: n > 2000 → CLT skewness bypass (|skew| ≤ 1.5) → Lilliefors
+    """
     n = len(x)
     if n < 3:
         return {"name": f"Normality ({label})", "met": True, "detail": "Too few obs to test"}
     if np.std(x) == 0:
         return {"name": f"Normality ({label})", "met": True, "detail": "Constant values (no variation)"}
-    if n <= 2000:
-        stat, p = sp.shapiro(x[:5000])
+
+    if n < 50:
+        # Small sample — Shapiro-Wilk is most powerful
+        stat, p = sp.shapiro(x)
         if np.isnan(p):
             return {"name": f"Normality ({label})", "met": True, "detail": "Test inconclusive"}
         test_name = "Shapiro-Wilk"
+    elif n <= 2000:
+        # Medium sample — Kolmogorov-Smirnov with Lilliefors correction
+        from statsmodels.stats.diagnostic import lilliefors as _lf
+        stat, p = _lf(x, dist="norm")
+        test_name = "Kolmogorov-Smirnov (Lilliefors)"
     else:
+        # Large sample — CLT bypass if skewness is acceptable
         skew = float(sp.skew(x))
         if abs(skew) <= 1.5:
             return {"name": f"Normality ({label})", "met": True,
                     "detail": f"CLT bypass (n={n}, |skewness|={abs(skew):.2f} ≤ 1.5)"}
         from statsmodels.stats.diagnostic import lilliefors as _lf
         stat, p = _lf(x, dist="norm")
-        test_name = "Lilliefors"
+        test_name = "Kolmogorov-Smirnov (Lilliefors)"
+
     return {"name": f"Normality ({label})", "met": bool(p >= 0.05),
             "detail": f"{test_name}: p = {p:.4f}"}
 

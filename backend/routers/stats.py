@@ -82,16 +82,20 @@ def descriptive(session_id: str, column: Optional[str] = None):
             continue
         q1, q3 = s.quantile([0.25, 0.75])
         n = len(s)
-        if n <= 2000:
-            _, p_norm = scipy_stats.shapiro(s[:5000])
+        if n < 50:
+            _, p_norm = scipy_stats.shapiro(s)
             norm_test = "Shapiro-Wilk"
+        elif n <= 2000:
+            from statsmodels.stats.diagnostic import lilliefors as _lilliefors
+            _, p_norm = _lilliefors(s.values, dist="norm")
+            norm_test = "Kolmogorov-Smirnov (Lilliefors)"
         elif abs(float(scipy_stats.skew(s))) <= 1.5:
             p_norm = 0.999  # CLT bypass — mild skewness at large n
             norm_test = "Skewness (CLT bypass)"
         else:
             from statsmodels.stats.diagnostic import lilliefors as _lilliefors
             _, p_norm = _lilliefors(s.values, dist="norm")
-            norm_test = "Lilliefors"
+            norm_test = "Kolmogorov-Smirnov (Lilliefors)"
         results[col] = {
             "n": int(s.count()),
             "missing": int(df[col].isna().sum()),
@@ -1013,21 +1017,29 @@ def _build_stat_rows(
 
 
 def _normality_test(s_clean: pd.Series) -> tuple[float, str]:
-    """Return (p_value, test_name). Three-tier: Shapiro ≤2000, CLT bypass, Lilliefors."""
+    """Return (p_value, test_name).
+
+    Tier 1: n < 50   → Shapiro-Wilk (most powerful for small samples)
+    Tier 2: 50 ≤ n ≤ 2000 → Kolmogorov-Smirnov with Lilliefors correction
+    Tier 3: n > 2000 → CLT skewness bypass → Lilliefors
+    """
     n = len(s_clean)
     if n < 3:
         return 1.0, "—"
-    if n <= 2000:
-        _, p = scipy_stats.shapiro(s_clean[:5000])
+    if n < 50:
+        _, p = scipy_stats.shapiro(s_clean)
         return float(p), "Shapiro-Wilk"
+    if n <= 2000:
+        from statsmodels.stats.diagnostic import lilliefors as _lilliefors
+        _, p = _lilliefors(s_clean.values, dist="norm")
+        return float(p), "Kolmogorov-Smirnov (Lilliefors)"
     # Large n — check skewness first (CLT bypass)
     skewness = float(scipy_stats.skew(s_clean))
     if abs(skewness) <= 1.5:
         return 0.999, "Skewness (CLT bypass)"
-    # Marked skewness — Lilliefors-corrected KS test
     from statsmodels.stats.diagnostic import lilliefors as _lilliefors
     _, p = _lilliefors(s_clean.values, dist="norm")
-    return float(p), "Lilliefors"
+    return float(p), "Kolmogorov-Smirnov (Lilliefors)"
 
 
 @router.post("/table1")
@@ -1271,25 +1283,17 @@ def correlation_pair(req: CorrelationPairRequest):
         raise HTTPException(status_code=400, detail="Need at least 3 observations")
 
     # ── Normality assessment ──────────────────────────────────────────────────
-    # Three-tier strategy matching professional statistical software:
+    # Three-tier strategy matching SPSS conventions:
     #
-    # Tier 1 (n ≤ 2000): Shapiro-Wilk — most powerful test for small/medium samples.
-    #
-    # Tier 2 (n > 2000, |skewness| ≤ 1.5): CLT Skewness Bypass — at large n,
-    #   even Lilliefors becomes hypersensitive. Mild skewness (-1.5 to +1.5)
-    #   does not violate Pearson's assumptions at large n; the Central Limit
-    #   Theorem ensures the sampling distribution of r is approximately normal.
-    #   Treat as normal; preserve statistical power.
-    #
-    # Tier 3 (n > 2000, |skewness| > 1.5): Lilliefors-corrected KS — standard
-    #   KS assumes known population parameters; Lilliefors corrects for the fact
-    #   that mean/SD are estimated from the sample (reduces false normality).
+    # Tier 1 (n < 50): Shapiro-Wilk — most powerful for small samples.
+    # Tier 2 (50 ≤ n ≤ 2000): Kolmogorov-Smirnov with Lilliefors correction.
+    # Tier 3 (n > 2000): CLT bypass if |skewness| ≤ 1.5, else Lilliefors.
 
     def _assess_normality(arr: np.ndarray) -> dict:
         _n = len(arr)
         skewness = float(scipy_stats.skew(arr))
 
-        if _n <= 2000:
+        if _n < 50:
             stat, p_val = scipy_stats.shapiro(arr)
             return {
                 "statistic": float(stat),
@@ -1300,7 +1304,20 @@ def correlation_pair(req: CorrelationPairRequest):
                 "bypass": None,
             }
 
-        # Large n — check skewness first
+        # Medium n (50–2000) — Kolmogorov-Smirnov with Lilliefors correction
+        if _n <= 2000:
+            from statsmodels.stats.diagnostic import lilliefors as _lilliefors
+            stat, p_val = _lilliefors(arr, dist="norm")
+            return {
+                "statistic": float(stat),
+                "p": float(p_val),
+                "normal": bool(p_val >= 0.05),
+                "skewness": skewness,
+                "test": "Kolmogorov-Smirnov (Lilliefors)",
+                "bypass": None,
+            }
+
+        # Large n (>2000) — CLT bypass if skewness is mild
         if abs(skewness) <= 1.5:
             return {
                 "statistic": None,
@@ -1311,7 +1328,7 @@ def correlation_pair(req: CorrelationPairRequest):
                 "bypass": "clt_skew",
             }
 
-        # Marked skewness — Lilliefors-corrected KS test
+        # Large n with marked skewness — Lilliefors
         from statsmodels.stats.diagnostic import lilliefors as _lilliefors
         stat, p_val = _lilliefors(arr, dist="norm")
         return {
@@ -1319,7 +1336,7 @@ def correlation_pair(req: CorrelationPairRequest):
             "p": float(p_val),
             "normal": bool(p_val >= 0.05),
             "skewness": skewness,
-            "test": "Lilliefors",
+            "test": "Kolmogorov-Smirnov (Lilliefors)",
             "bypass": None,
         }
 
@@ -1330,8 +1347,8 @@ def correlation_pair(req: CorrelationPairRequest):
 
     # Top-level test label for display (most conservative test used)
     _tests_used = {norm1["test"], norm2["test"]}
-    if "Lilliefors" in _tests_used:
-        norm_test_name = "Lilliefors"
+    if any("Kolmogorov" in t or "Lilliefors" in t for t in _tests_used):
+        norm_test_name = "Kolmogorov-Smirnov (Lilliefors)"
     elif "Shapiro-Wilk" in _tests_used:
         norm_test_name = "Shapiro-Wilk"
     else:
