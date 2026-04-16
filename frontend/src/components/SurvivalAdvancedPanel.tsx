@@ -170,6 +170,10 @@ export default function SurvivalAdvancedPanel() {
   // KM screening state
   const [kmScanResult, setKmScanResult] = useState<any[]>([]);
   const [kmScanLoading, setKmScanLoading] = useState(false);
+  // Group rename state
+  const [kmGroupLabels, setKmGroupLabels] = useState<Record<string, string>>({});
+  const [kmContextMenu, setKmContextMenu] = useState<{ group: string; x: number; y: number } | null>(null);
+  const [kmRenameValue, setKmRenameValue] = useState("");
 
   // Cox state
   const [coxDuration, setCoxDuration] = useState("");
@@ -469,42 +473,119 @@ export default function SurvivalAdvancedPanel() {
                   x: g.curve.map((p: any) => p.time),
                   y: g.curve.map((p: any) => p.survival),
                   type: "scatter", mode: "lines",
-                  name: g.group,
+                  name: kmGroup
+                    ? `${kmGroup} = ${kmGroupLabels[String(g.group)] ?? g.group}`
+                    : (kmGroupLabels[String(g.group)] ?? String(g.group)),
                   line: { width: 2, color: ["#6366f1","#f59e0b","#10b981","#ef4444","#8b5cf6"][i % 5] },
                 }))}
                 layout={{
-                  title: "Kaplan-Meier Survival Curves",
-                  xaxis: { title: kmDuration, gridcolor: "#e5e7eb" },
-                  yaxis: { title: "Survival Probability", range: [0, 1.05], gridcolor: "#e5e7eb" },
+                  title: { text: "Kaplan-Meier Survival Curves", font: { color: "#374151", size: 13 } },
+                  xaxis: {
+                    title: { text: `Time (${kmDuration})`, font: { color: "#6b7280", size: 11 } },
+                    gridcolor: "#e5e7eb",
+                  },
+                  yaxis: {
+                    title: { text: "Survival Probability", font: { color: "#6b7280", size: 11 } },
+                    range: [0, 1.05], gridcolor: "#e5e7eb",
+                    tickformat: ".0%",
+                  },
                   paper_bgcolor: "transparent", plot_bgcolor: "#ffffff",
                   font: { color: "#374151", size: 12 },
-                  margin: { t: 40, r: 20, b: 50, l: 60 }, showlegend: true,
+                  margin: { t: 44, r: 20, b: 56, l: 68 }, showlegend: true,
+                  legend: { title: { text: kmGroup || "Group" } },
                 }}
                 config={{ responsive: true }} style={{ width: "100%", height: 400 }}
               />
               <PlotExporter plotRef={kmPlotRef} title="KM_Survival" />
             </div>
-            {/* Group summary */}
-            <div className="overflow-auto rounded-lg border border-gray-200">
+
+            {/* Group summary table with right-click rename */}
+            <div className="overflow-auto rounded-lg border border-gray-200 relative">
               <table className="text-xs w-full">
                 <thead><tr className="bg-gray-50">
-                  <th className="px-3 py-1.5 text-left text-gray-500">Group</th>
+                  <th className="px-3 py-1.5 text-left text-gray-500">
+                    {kmGroup ? `${kmGroup} (Group)` : "Group"}
+                    <span className="ml-1 text-[10px] font-normal text-gray-400">— right-click to rename</span>
+                  </th>
                   <th className="px-3 py-1.5 text-left text-gray-500">N</th>
                   <th className="px-3 py-1.5 text-left text-gray-500">Events</th>
-                  <th className="px-3 py-1.5 text-left text-gray-500">Median Survival</th>
+                  <th className="px-3 py-1.5 text-left text-gray-500">Median Survival ({kmDuration})</th>
                 </tr></thead>
                 <tbody>
-                  {kmResult.groups.map((g: any, i: number) => (
-                    <tr key={i} className="border-t border-gray-100">
-                      <td className="px-3 py-1 font-medium text-gray-700">{g.group}</td>
-                      <td className="px-3 py-1 text-gray-600">{g.n}</td>
-                      <td className="px-3 py-1 text-gray-600">{g.events}</td>
-                      <td className="px-3 py-1 text-gray-600">{g.median_survival ?? "NR"}</td>
-                    </tr>
-                  ))}
+                  {kmResult.groups.map((g: any, i: number) => {
+                    const label = kmGroupLabels[String(g.group)] ?? String(g.group);
+                    return (
+                      <tr key={i} className="border-t border-gray-100 hover:bg-gray-50"
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          setKmContextMenu({ group: String(g.group), x: e.clientX, y: e.clientY });
+                          setKmRenameValue(label);
+                        }}
+                      >
+                        <td className="px-3 py-1 font-medium text-gray-700 cursor-context-menu select-none">
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="w-2.5 h-2.5 rounded-full inline-block flex-shrink-0"
+                              style={{ background: ["#6366f1","#f59e0b","#10b981","#ef4444","#8b5cf6"][i % 5] }} />
+                            {label}
+                            {kmGroupLabels[String(g.group)] && (
+                              <span className="text-[10px] text-gray-400">({g.group})</span>
+                            )}
+                          </span>
+                        </td>
+                        <td className="px-3 py-1 text-gray-600">{g.n}</td>
+                        <td className="px-3 py-1 text-gray-600">{g.events}</td>
+                        <td className="px-3 py-1 text-gray-600">{g.median_survival ?? "NR"}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
+
+              {/* Right-click context menu */}
+              {kmContextMenu && (
+                <div
+                  className="fixed bg-white border border-gray-200 rounded-lg shadow-lg z-50 p-3 min-w-[200px]"
+                  style={{ top: kmContextMenu.y, left: kmContextMenu.x }}
+                  onMouseLeave={() => setKmContextMenu(null)}
+                >
+                  <p className="text-[10px] text-gray-400 mb-1.5 font-medium uppercase tracking-wide">
+                    Rename group "{kmContextMenu.group}"
+                  </p>
+                  <input
+                    autoFocus
+                    className="w-full text-xs border border-gray-300 rounded px-2 py-1 mb-2 focus:outline-none focus:border-indigo-400"
+                    value={kmRenameValue}
+                    onChange={(e) => setKmRenameValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        setKmGroupLabels((prev) => ({ ...prev, [kmContextMenu.group]: kmRenameValue }));
+                        setKmContextMenu(null);
+                      }
+                      if (e.key === "Escape") setKmContextMenu(null);
+                    }}
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        setKmGroupLabels((prev) => ({ ...prev, [kmContextMenu.group]: kmRenameValue }));
+                        setKmContextMenu(null);
+                      }}
+                      className="flex-1 text-xs bg-indigo-600 text-white rounded px-2 py-1 hover:bg-indigo-700"
+                    >Save</button>
+                    <button
+                      onClick={() => {
+                        const next = { ...kmGroupLabels };
+                        delete next[kmContextMenu.group];
+                        setKmGroupLabels(next);
+                        setKmContextMenu(null);
+                      }}
+                      className="text-xs text-gray-400 hover:text-red-500 px-2 py-1"
+                    >Reset</button>
+                  </div>
+                </div>
+              )}
             </div>
+
             {kmResult.logrank && (
               <div className={`text-sm px-4 py-2 rounded-lg border ${kmResult.logrank.p < 0.05 ? "bg-indigo-50 border-indigo-200 text-indigo-700" : "bg-gray-50 border-gray-200 text-gray-600"}`}>
                 Log-rank test: p = {kmResult.logrank.p < 0.001 ? "<0.001" : kmResult.logrank.p?.toFixed(4)}
