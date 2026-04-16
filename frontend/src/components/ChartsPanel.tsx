@@ -220,6 +220,8 @@ function buildTraces(d: any, chartType: string, C: string[], td: { lineWidth: nu
       name: g.group,
       marker: { color: C[i % C.length] },
       boxpoints: d.groups[0].values.length < 500 ? "outliers" : false,
+      text: g.row_indices?.map((idx: number) => `Row ${idx + 1}`),
+      hovertemplate: "%{y}<br>%{text}<extra>%{fullData.name}</extra>",
     }));
   }
 

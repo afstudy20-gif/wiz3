@@ -118,10 +118,17 @@ def scatter(req: ChartRequest):
 def boxplot(req: ChartRequest):
     df = _get_df(req.session_id)
     if req.color:
-        groups = df.groupby(req.color)[req.x].apply(lambda s: s.dropna().tolist()).to_dict()
-        result = [{"group": str(k), "values": v} for k, v in groups.items()]
+        result = []
+        for grp, sub in df.groupby(req.color):
+            mask = sub[req.x].notna()
+            vals = sub.loc[mask, req.x].tolist()
+            indices = sub.loc[mask].index.tolist()
+            result.append({"group": str(grp), "values": vals, "row_indices": indices})
     else:
-        result = [{"group": "All", "values": df[req.x].dropna().tolist()}]
+        mask = df[req.x].notna()
+        vals = df.loc[mask, req.x].tolist()
+        indices = df.loc[mask].index.tolist()
+        result = [{"group": "All", "values": vals, "row_indices": indices}]
     return {"type": "boxplot", "x": req.x, "groups": result}
 
 

@@ -91,6 +91,28 @@ async def clear_cells(session_id: str, body: ClearCellsRequest):
     return {"cleared": cleared}
 
 
+class ReorderColumnsRequest(BaseModel):
+    columns: list  # ordered list of column names
+
+
+@router.post("/{session_id}/reorder_columns")
+async def reorder_columns(session_id: str, body: ReorderColumnsRequest):
+    """Reorder DataFrame columns to match frontend drag-and-drop order."""
+    df = store.get(session_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    new_order = [c for c in body.columns if c in df.columns]
+    # Append any columns that weren't in the request (safety)
+    for c in df.columns:
+        if c not in new_order:
+            new_order.append(c)
+
+    df = df[new_order]
+    store.save(session_id, df)
+    return {"columns": list(df.columns)}
+
+
 # ── Export ─────────────────────────────────────────────────────────────────────
 
 @router.get("/{session_id}/export")

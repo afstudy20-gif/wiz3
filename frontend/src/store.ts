@@ -180,6 +180,11 @@ export const useStore = create<AppState>((set) => ({
       const cols = [...state.session.columns];
       const [moved] = cols.splice(fromIndex, 1);
       cols.splice(toIndex, 0, moved);
+      // Sync to backend so column order persists across refresh/export
+      const colNames = cols.map((c) => c.name);
+      import("./api").then((api) => {
+        api.default.post(`/api/sessions/${state.session!.session_id}/reorder_columns`, { columns: colNames }).catch(() => {});
+      });
       return { session: { ...state.session, columns: cols } };
     }),
   setTable1Result: (r) => set({ table1Result: r }),
