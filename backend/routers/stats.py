@@ -1171,6 +1171,18 @@ def table1(req: Table1Request):
                 except Exception:
                     p_value_str = "N/A"
 
+            # SMD (Standardized Mean Difference) — only for 2-group comparisons
+            smd_val: Optional[float] = None
+            if groups is not None and len(group_arrs) == 2:
+                try:
+                    g1, g2 = group_arrs[0], group_arrs[1]
+                    if len(g1) > 0 and len(g2) > 0:
+                        pooled_std = np.sqrt((g1.var(ddof=1) + g2.var(ddof=1)) / 2)
+                        if pooled_std > 0:
+                            smd_val = round(float(abs(g1.mean() - g2.mean()) / pooled_std), 4)
+                except Exception:
+                    pass
+
             row: dict = {
                 "variable": var,
                 "type": "numeric",
@@ -1182,6 +1194,7 @@ def table1(req: Table1Request):
                 "p_value": p_value_str,
                 "test": test_name_str,
                 "significant": significant,
+                "smd": smd_val,
                 # Legacy fields (for backward compat)
                 "stat_label": stat_rows[0]["label"] if stat_rows else "",
                 "overall": stat_rows[0]["overall"] if stat_rows else "",
@@ -1223,6 +1236,35 @@ def table1(req: Table1Request):
                 except Exception:
                     p_val = "N/A"
 
+            # SMD for categorical (proportion difference / pooled SE) — 2-group only
+            cat_smd: Optional[float] = None
+            if groups is not None and len(groups) == 2:
+                try:
+                    g1_s = df[df[req.group_column] == groups[0]][var].astype(str)
+                    g2_s = df[df[req.group_column] == groups[1]][var].astype(str)
+                    all_cats = sorted(set(g1_s.dropna()) | set(g2_s.dropna()))
+                    if len(all_cats) == 2:
+                        # Binary: use simple proportion SMD
+                        target = all_cats[0]
+                        p1 = (g1_s == target).mean()
+                        p2 = (g2_s == target).mean()
+                        pooled = np.sqrt((p1 * (1 - p1) + p2 * (1 - p2)) / 2)
+                        if pooled > 0:
+                            cat_smd = round(float(abs(p1 - p2) / pooled), 4)
+                    elif len(all_cats) > 2:
+                        # Multi-category: Mahalanobis-like SMD (Yang & Dalton 2012)
+                        p1_vec = np.array([(g1_s == c).mean() for c in all_cats[:-1]])
+                        p2_vec = np.array([(g2_s == c).mean() for c in all_cats[:-1]])
+                        s1 = np.diag(p1_vec * (1 - p1_vec))
+                        s2 = np.diag(p2_vec * (1 - p2_vec))
+                        s_pool = (s1 + s2) / 2
+                        diff = p1_vec - p2_vec
+                        det = np.linalg.det(s_pool)
+                        if det > 1e-12:
+                            cat_smd = round(float(np.sqrt(diff @ np.linalg.inv(s_pool) @ diff)), 4)
+                except Exception:
+                    pass
+
             row = {
                 "variable": var,
                 "type": "categorical",
@@ -1235,6 +1277,7 @@ def table1(req: Table1Request):
                 "sub_rows": sub_rows,
                 "group_stats": {},
                 "stat_rows": [],
+                "smd": cat_smd,
             }
         rows.append(row)
 

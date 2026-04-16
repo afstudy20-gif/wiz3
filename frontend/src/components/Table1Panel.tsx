@@ -157,6 +157,7 @@ export default function Table1Panel() {
   const [kindOverrides, setKindOverrides] = useState<Record<string, "numeric" | "categorical">>({});
   const [selectedStats, setSelectedStats] = useState<Set<string>>(new Set(["auto"]));
   const [showStats, setShowStats] = useState(false);
+  const [showSMD, setShowSMD] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -225,7 +226,9 @@ export default function Table1Panel() {
     const headers = ["Variable", "Statistic",
       `Overall (n=${result.total_n})`,
       ...gl.map((g) => `${result.group_column ? result.group_column + "=" : ""}${g} (n=${result.group_ns[g] ?? ""})`),
-      "p-value", "Test", "Normality test"];
+      "p-value", "Test",
+      ...(showSMD ? ["SMD"] : []),
+      "Normality test"];
     const rows: string[][] = [];
     result.rows.forEach((row: any) => {
       if (row.type === "numeric") {
@@ -236,15 +239,18 @@ export default function Table1Panel() {
             ...gl.map((g: string) => sr.group_stats[g] ?? ""),
             i === 0 ? (row.p_value ?? "") : "",
             i === 0 ? (row.test ?? "") : "",
+            ...(showSMD ? [i === 0 && row.smd != null ? row.smd.toFixed(3) : ""] : []),
             i === 0 ? `${row.normality_test} (p=${row.normality_p})` : "",
           ]);
         });
       } else {
         rows.push([row.variable, "n (%)", `n=${row.overall_n}`,
-          ...gl.map(() => ""), row.p_value ?? "", row.test ?? "", ""]);
+          ...gl.map(() => ""), row.p_value ?? "", row.test ?? "",
+          ...(showSMD ? [row.smd != null ? row.smd.toFixed(3) : ""] : []), ""]);
         (row.sub_rows ?? []).forEach((sr: any) => {
           rows.push([`  ${sr.category}`, "", sr.overall,
-            ...gl.map((g: string) => sr.group_stats[g] ?? ""), "", "", ""]);
+            ...gl.map((g: string) => sr.group_stats[g] ?? ""), "", "",
+            ...(showSMD ? [""] : []), ""]);
         });
       }
     });
@@ -312,6 +318,22 @@ export default function Table1Panel() {
             </div>
           )}
         </div>
+
+        {/* SMD toggle — only visible when a group column is selected */}
+        {groupCol && (
+          <div className="px-3 py-2 border-b border-gray-200 flex-shrink-0">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                className="accent-indigo-500"
+                checked={showSMD}
+                onChange={(e) => setShowSMD(e.target.checked)}
+              />
+              <span className="text-xs text-gray-600 font-medium">Show SMD</span>
+              <span className="text-[9px] text-gray-400">(Standardized Mean Difference)</span>
+            </label>
+          </div>
+        )}
 
         {/* Variable selector */}
         <div className="px-3 py-2 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
@@ -426,6 +448,9 @@ export default function Table1Panel() {
                         <th className="text-center px-3 py-3 text-gray-400 font-normal text-xs w-28">Test</th>
                       </>
                     )}
+                    {hasGroups && showSMD && (
+                      <th className="text-center px-3 py-3 text-gray-700 font-semibold w-20">SMD</th>
+                    )}
                     <th className="text-center px-2 py-3 text-gray-400 font-normal text-[10px] w-20">
                       Normality
                     </th>
@@ -470,6 +495,19 @@ export default function Table1Panel() {
                               </td>
                             </>
                           )}
+                          {hasGroups && showSMD && (
+                            <td className="px-3 py-1.5 text-center text-xs font-mono">
+                              {si === 0 && row.smd != null ? (
+                                <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                                  row.smd > 0.2 ? "bg-amber-100 text-amber-700" :
+                                  row.smd > 0.1 ? "bg-yellow-50 text-yellow-700" :
+                                  "bg-green-50 text-green-700"
+                                }`}>
+                                  {row.smd.toFixed(3)}
+                                </span>
+                              ) : null}
+                            </td>
+                          )}
                           <td className="px-2 py-1.5 text-center">
                             {si === 0 && row.normality_test ? (
                               <div className={`text-[9px] px-1 py-0.5 rounded font-medium inline-block
@@ -513,6 +551,19 @@ export default function Table1Panel() {
                               <td className="px-3 py-2 text-center text-xs text-gray-400">{row.test}</td>
                             </>
                           )}
+                          {hasGroups && showSMD && (
+                            <td className="px-3 py-2 text-center text-xs font-mono">
+                              {row.smd != null ? (
+                                <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                                  row.smd > 0.2 ? "bg-amber-100 text-amber-700" :
+                                  row.smd > 0.1 ? "bg-yellow-50 text-yellow-700" :
+                                  "bg-green-50 text-green-700"
+                                }`}>
+                                  {row.smd.toFixed(3)}
+                                </span>
+                              ) : "—"}
+                            </td>
+                          )}
                           <td className="px-2 py-2 text-center text-[9px] text-gray-300">—</td>
                         </tr>
                         {(row.sub_rows ?? []).map((sr, si) => (
@@ -528,6 +579,7 @@ export default function Table1Panel() {
                               </td>
                             ))}
                             {hasGroups && <><td /><td /></>}
+                            {hasGroups && showSMD && <td />}
                             <td />
                           </tr>
                         ))}
