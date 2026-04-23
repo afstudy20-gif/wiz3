@@ -52,6 +52,7 @@ interface T1Row {
   normal?: boolean;
   normality_test?: string;
   normality_p?: number;
+  smd?: number | null;
   group_stats: Record<string, string>;
   sub_rows?: { category: string; overall: string; group_stats: Record<string, string> }[];
 }

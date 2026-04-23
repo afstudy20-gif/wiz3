@@ -166,8 +166,6 @@ const CHART_TABS = [
   { id: "violin",    label: "Violin" },
   { id: "qq",        label: "Q-Q Plot" },
 ] as const;
-type ChartTab = typeof CHART_TABS[number]["id"];
-
 function NumericView({ summary, loadSummary, selected }: { summary: any; loadSummary: (col: string) => void; selected: string }) {
   const chartTab = useStore((s) => s.descriptiveTab);
   const setChartTab = useStore((s) => s.setDescriptiveTab);
@@ -244,8 +242,6 @@ function NumericView({ summary, loadSummary, selected }: { summary: any; loadSum
   const boxData: any[] = [boxTrace, summaryScatter, ...outlierTrace];
 
 
-  const zExtremes: { row: number; value: number; z: number; qq_x: number }[] =
-    summary.z_extremes ?? [];
   const normalityDeviants: { row: number; value: number; z: number; qq_x: number; abs_residual: number }[] =
     summary.normality_deviants ?? [];
 
@@ -1065,7 +1061,7 @@ export default function DescriptivePanel() {
 
                 {/* Charts */}
                 <div className="flex-1 overflow-y-auto p-4">
-                  {summary.type === "numeric" && <NumericView summary={summary} loadSummary={loadSummary} selected={selected} />}
+                  {summary.type === "numeric" && <NumericView summary={summary} loadSummary={loadSummary} selected={selected ?? ""} />}
                   {summary.type === "categorical" && <CategoricalView summary={summary} />}
                 </div>
               </>
