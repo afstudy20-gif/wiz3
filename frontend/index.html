@@ -5,13 +5,28 @@
     <link rel="icon" type="image/png" href="/logo.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#6366f1" />
-    <meta name="description" content="uSTAT - SPSS-like statistical analysis in your browser" />
-    <link rel="manifest" href="/manifest.webmanifest" />
+    <title>uSTAT — Free Statistical Analysis Platform for Researchers</title>
+    <meta name="description" content="uSTAT is a free, browser-based SPSS alternative for statistical analysis. Run t-tests, ANOVA, regression, survival analysis, ROC curves, and more — no installation, no upload to servers. Built for clinicians and researchers." />
+    <meta name="keywords" content="SPSS alternative, free statistics software, online statistical analysis, Cox regression, Kaplan-Meier, ROC curve, ANOVA, t-test, browser statistics, clinical research" />
+    <meta name="author" content="Dr. Yusuf Hoşoğlu" />
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://ustat.drtr.uk/" />
+    <meta property="og:title" content="uSTAT — Free Statistical Analysis Platform" />
+    <meta property="og:description" content="Browser-based SPSS alternative. Run t-tests, ANOVA, regression, survival analysis, ROC curves and more. No installation needed." />
+    <meta property="og:image" content="https://ustat.drtr.uk/pwa-512.png" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="uSTAT — Free Statistical Analysis Platform" />
+    <meta name="twitter:description" content="Browser-based SPSS alternative. Run t-tests, ANOVA, regression, survival analysis, ROC curves and more." />
+    <meta name="twitter:image" content="https://ustat.drtr.uk/pwa-512.png" />
+
     <link rel="apple-touch-icon" href="/pwa-192.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="uSTAT" />
-    <title>uSTAT</title>
     <!-- Polyfill Node.js globals used by plotly.js and its deps.
          Must run before any ES module so it is a classic (non-module) script. -->
     <script>
@@ -44,7 +59,40 @@
     </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Static content for SEO + non-JS users (replaced by React when JS loads) -->
+      <div style="max-width:800px;margin:60px auto;padding:24px;font-family:system-ui,-apple-system,sans-serif;color:#374151">
+        <h1 style="font-size:32px;color:#1f2937;margin-bottom:8px">uSTAT — Statistical Analysis Platform</h1>
+        <p style="color:#6b7280;font-size:16px;margin-bottom:24px">Free, browser-based SPSS alternative for clinicians and researchers.</p>
+
+        <h2 style="font-size:20px;color:#1f2937;margin-top:32px;margin-bottom:12px">What is uSTAT?</h2>
+        <p style="line-height:1.6">uSTAT is a free statistical analysis platform that runs entirely in your browser. Upload CSV, Excel, SPSS, SAS, or Stata files and run the same analyses you would in SPSS, R, or Stata — without any installation.</p>
+
+        <h2 style="font-size:20px;color:#1f2937;margin-top:32px;margin-bottom:12px">Features</h2>
+        <ul style="line-height:1.8;padding-left:20px">
+          <li><strong>Descriptive statistics</strong> — Mean, median, IQR, normality tests, Q-Q plots</li>
+          <li><strong>Hypothesis tests</strong> — t-test, ANOVA, Mann-Whitney, Kruskal-Wallis, chi-square, Fisher's exact</li>
+          <li><strong>Correlation</strong> — Pearson, Spearman, Kendall with significance matrix</li>
+          <li><strong>ROC curves</strong> — AUC, sensitivity/specificity, Youden index, comparing curves</li>
+          <li><strong>Regression models</strong> — Linear, logistic, Poisson, polynomial, mixed effects</li>
+          <li><strong>Survival analysis</strong> — Kaplan-Meier, Cox proportional hazards, Fine-Gray competing risks, landmark</li>
+          <li><strong>Table 1</strong> — Publication-ready baseline characteristics with SMD</li>
+          <li><strong>Propensity score matching</strong> — Balance diagnostics, treatment effect estimation</li>
+          <li><strong>Power analysis</strong> — Sample size calculation, effect size estimation</li>
+          <li><strong>Missing data</strong> — MICE multiple imputation</li>
+        </ul>
+
+        <h2 style="font-size:20px;color:#1f2937;margin-top:32px;margin-bottom:12px">Privacy</h2>
+        <p style="line-height:1.6">Your data is processed in your browser session. Files are not stored on our servers permanently — they exist only while you have the page open.</p>
+
+        <p style="margin-top:32px;color:#9ca3af;font-size:14px">Loading interactive app... If this message persists, please enable JavaScript.</p>
+      </div>
+    </div>
+    <noscript>
+      <div style="padding:24px;background:#fef3c7;color:#92400e;text-align:center;font-family:system-ui,sans-serif">
+        uSTAT requires JavaScript to run statistical analyses. Please enable JavaScript and reload the page.
+      </div>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
