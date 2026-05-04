@@ -833,16 +833,29 @@ export default function DataTable() {
     }
   };
 
+  const triggerIframeDownload = useCallback((url: string) => {
+    let iframe = document.getElementById("download-iframe") as HTMLIFrameElement | null;
+    if (!iframe) {
+      iframe = document.createElement("iframe");
+      iframe.id = "download-iframe";
+      iframe.style.display = "none";
+      document.body.appendChild(iframe);
+    }
+    iframe.src = url;
+  }, []);
+
   const downloadAs = useCallback((fmt: "csv" | "tsv" | "xlsx" | "sav") => {
     const base     = (session.filename ?? "data").replace(/\.[^.]+$/, "");
     const colKinds = encodeURIComponent(JSON.stringify(Object.fromEntries(columns.map((c) => [c.name, c.kind]))));
     const url      = `/api/sessions/${session.session_id}/export?fmt=${fmt}&filename=${encodeURIComponent(base)}&col_kinds=${colKinds}`;
-
-    // Use window.location for direct download — backend returns Content-Disposition: attachment
-    // This won't navigate away because the browser intercepts attachment responses
-    window.location.assign(url);
+    triggerIframeDownload(url);
     setShowSaveMenu(false);
-  }, [session.session_id, session.filename, columns]);
+  }, [session.session_id, session.filename, columns, triggerIframeDownload]);
+
+  const downloadSession = useCallback(() => {
+    triggerIframeDownload(`/api/sessions/${session.session_id}/save_session`);
+    setShowSaveMenu(false);
+  }, [session.session_id, triggerIframeDownload]);
 
   const activeFilters = Object.values(filters).filter(Boolean).length;
 
@@ -1026,10 +1039,7 @@ export default function DataTable() {
                   Session
                 </p>
                 <button
-                  onClick={() => {
-                    window.location.assign(`/api/sessions/${session.session_id}/save_session`);
-                    setShowSaveMenu(false);
-                  }}
+                  onClick={downloadSession}
                   className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-gray-50 transition-colors"
                 >
                   <span className="text-base">💾</span>

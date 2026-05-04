@@ -53,12 +53,9 @@ const TABS = [
   { id: "missing",     label: "Missing",     icon: Filter },
 ];
 
-/** Download file via hidden iframe — most reliable cross-platform method */
-function triggerDownload(sessionId: string, format: "csv" | "xlsx", originalFilename: string) {
-  const outName = originalFilename.replace(/\.(csv|xlsx|sav|xls|sas7bdat|dta)$/i, "") + `_export.${format}`;
-  const url = `/api/sessions/${sessionId}/export/${format}?filename=${encodeURIComponent(outName)}`;
-
-  // Hidden iframe approach: browser downloads file without navigating away
+/** Download file via hidden iframe — most reliable cross-platform method.
+ *  Browser downloads file without navigating away (no SPA state loss). */
+function downloadViaIframe(url: string) {
   let iframe = document.getElementById("download-iframe") as HTMLIFrameElement | null;
   if (!iframe) {
     iframe = document.createElement("iframe");
@@ -67,6 +64,15 @@ function triggerDownload(sessionId: string, format: "csv" | "xlsx", originalFile
     document.body.appendChild(iframe);
   }
   iframe.src = url;
+}
+
+function triggerDownload(sessionId: string, format: "csv" | "xlsx", originalFilename: string) {
+  const outName = originalFilename.replace(/\.(csv|xlsx|sav|xls|sas7bdat|dta)$/i, "") + `_export.${format}`;
+  downloadViaIframe(`/api/sessions/${sessionId}/export/${format}?filename=${encodeURIComponent(outName)}`);
+}
+
+function triggerSessionDownload(sessionId: string) {
+  downloadViaIframe(`/api/sessions/${sessionId}/save_session`);
 }
 
 /** Modal asking user to save before opening a new file */
@@ -224,8 +230,7 @@ export default function App() {
   const handleSave = (fmt: "csv" | "xlsx" | "json") => {
     if (!session) return;
     if (fmt === "json") {
-      // Session JSON — use the save_session endpoint directly
-      window.location.assign(`/api/sessions/${session.session_id}/save_session`);
+      triggerSessionDownload(session.session_id);
     } else {
       triggerDownload(session.session_id, fmt, session.filename);
     }
