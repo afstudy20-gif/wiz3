@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Upload, Info, Zap, BarChart2 } from "lucide-react";
+import { Upload, Info, Zap, BarChart2, ShieldAlert, ListChecks, Sparkles } from "lucide-react";
 import { uploadFile } from "../api";
 import api from "../api";
 import { useStore } from "../store";
@@ -133,6 +133,31 @@ export default function UploadZone() {
           </div>
           <span className="text-xs text-gray-400">No data needed</span>
         </button>
+      </div>
+
+      {/* Quick facts — privacy, scope, cost */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 w-full max-w-2xl text-xs">
+        <div className="flex items-start gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white">
+          <ShieldAlert size={14} className="text-amber-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold text-gray-700">Privacy</p>
+            <p className="text-gray-500 leading-snug">Data uploaded to server for analysis. Avoid sensitive or confidential files.</p>
+          </div>
+        </div>
+        <div className="flex items-start gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white">
+          <ListChecks size={14} className="text-indigo-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold text-gray-700">Scope</p>
+            <p className="text-gray-500 leading-snug">t-tests, ANOVA, regression, non-parametric, survival, power &amp; more.</p>
+          </div>
+        </div>
+        <div className="flex items-start gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white">
+          <Sparkles size={14} className="text-emerald-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold text-gray-700">Cost</p>
+            <p className="text-gray-500 leading-snug">Free to use. No account, no paywall.</p>
+          </div>
+        </div>
       </div>
 
       {loading && <p className="text-indigo-600 animate-pulse">Uploading and parsing…</p>}
