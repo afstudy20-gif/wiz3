@@ -852,10 +852,26 @@ export default function DataTable() {
     setShowSaveMenu(false);
   }, [session.session_id, session.filename, columns, triggerIframeDownload]);
 
-  const downloadSession = useCallback(() => {
-    triggerIframeDownload(`/api/sessions/${session.session_id}/save_session`);
-    setShowSaveMenu(false);
-  }, [session.session_id, triggerIframeDownload]);
+  const downloadSession = useCallback(async () => {
+    try {
+      const res = await api.get(`/api/sessions/${session.session_id}/save_session`, { responseType: "blob" });
+      const blob = new Blob([res.data], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const base = (session.filename ?? "session").replace(/\.[^.]+$/, "");
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${base}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+      console.error("Save session failed:", e);
+      alert(`Save session failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setShowSaveMenu(false);
+    }
+  }, [session.session_id, session.filename]);
 
   const activeFilters = Object.values(filters).filter(Boolean).length;
 

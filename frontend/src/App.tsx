@@ -1,7 +1,7 @@
 import "./index.css";
 import { Component, useState, type ReactNode } from "react";
 import { BarChart2, Table2, FlaskConical, GitMerge, Brain, X, TrendingUp, ClipboardList, Zap, Calculator, Grid3x3, Grid2x2, Shapes, FolderOpen, Target, Filter, Info } from "lucide-react";
-import { clearCases } from "./api";
+import { clearCases, saveSession as saveSessionApi } from "./api";
 import AboutModal from "./components/AboutModal";
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
@@ -71,8 +71,20 @@ function triggerDownload(sessionId: string, format: "csv" | "xlsx", originalFile
   downloadViaIframe(`/api/sessions/${sessionId}/export/${format}?filename=${encodeURIComponent(outName)}`);
 }
 
-function triggerSessionDownload(sessionId: string) {
-  downloadViaIframe(`/api/sessions/${sessionId}/save_session`);
+/** Save Session → fetch JSON as Blob via axios (same-origin) and trigger
+ *  an anchor-click download. Resolves when the download has been initiated
+ *  so callers can sequence post-download cleanup. */
+async function triggerSessionDownload(sessionId: string, filename?: string) {
+  const res = await saveSessionApi(sessionId);
+  const blob = new Blob([res.data], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = (filename ?? `session_${sessionId.slice(0, 8)}`).replace(/\.[^.]+$/, "") + ".json";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /** Modal asking user to save before opening a new file */
@@ -227,18 +239,30 @@ export default function App() {
 
   const handleOpenNew = () => setShowSaveModal(true);
 
-  const handleSave = (fmt: "csv" | "xlsx" | "json") => {
+  const handleSave = async (fmt: "csv" | "xlsx" | "json") => {
     if (!session) return;
-    if (fmt === "json") {
-      triggerSessionDownload(session.session_id);
-    } else {
-      triggerDownload(session.session_id, fmt, session.filename);
+    try {
+      if (fmt === "json") {
+        await triggerSessionDownload(session.session_id, session.filename);
+        // JSON download is fully complete (blob fetched + anchor clicked).
+        // Safe to clear immediately.
+        setShowSaveModal(false);
+        clearSession();
+      } else {
+        triggerDownload(session.session_id, fmt, session.filename);
+        // CSV/XLSX go via hidden iframe — give the browser time to start
+        // the download before tearing down the React tree.
+        setTimeout(() => {
+          setShowSaveModal(false);
+          clearSession();
+        }, 3000);
+      }
+    } catch (e) {
+      console.error("Save failed:", e);
+      const msg = e instanceof Error ? e.message : String(e);
+      alert(`Save failed: ${msg}`);
+      // Keep the modal and session intact so the user can retry.
     }
-    // Give browser time to start the download before clearing
-    setTimeout(() => {
-      setShowSaveModal(false);
-      clearSession();
-    }, 3000);
   };
 
   const handleSkip = () => {
