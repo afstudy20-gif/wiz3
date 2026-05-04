@@ -38,12 +38,20 @@ export default function AboutModal({ onClose }: { onClose: () => void }) {
 
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
 
+          {/* What is uSTAT */}
+          <div className="space-y-2">
+            <h3 className="text-xs font-bold text-gray-900 uppercase tracking-wider border-b border-gray-100 pb-1">What is uSTAT?</h3>
+            <p className="text-xs text-gray-700 leading-relaxed">
+              uSTAT is a free, browser-based statistical analysis platform and SPSS alternative for clinicians, biostatisticians, and medical researchers. Upload CSV, Excel, SPSS, SAS, or Stata files and run the same analyses you would in SPSS, R, or Stata — without any installation.
+            </p>
+          </div>
+
           {/* What makes uSTAT different */}
           <div className="bg-indigo-50 rounded-xl p-4 space-y-2">
             <h3 className="text-xs font-bold text-indigo-900 uppercase tracking-wider">What makes uSTAT different</h3>
             <ul className="text-xs text-indigo-800 space-y-1.5 list-none">
               <li className="flex gap-2"><span className="text-indigo-400 flex-shrink-0">1.</span><span><strong>Zero-code, browser-based</strong> — no syntax to learn. Point-and-click for every analysis.</span></li>
-              <li className="flex gap-2"><span className="text-indigo-400 flex-shrink-0">2.</span><span><strong>100% local & private</strong> — data never leaves your machine. No cloud upload required.</span></li>
+              <li className="flex gap-2"><span className="text-indigo-400 flex-shrink-0">2.</span><span><strong>Free forever</strong> — no account, no paywall, no usage limits.</span></li>
               <li className="flex gap-2"><span className="text-indigo-400 flex-shrink-0">3.</span><span><strong>Auto test selection</strong> — automatically picks the correct test based on normality, sample size, and variable type.</span></li>
               <li className="flex gap-2"><span className="text-indigo-400 flex-shrink-0">4.</span><span><strong>Built-in clinical calculators</strong> — CHA&#x2082;DS&#x2082;-VASc, GRACE, TIMI, eGFR, H2FPEF, MAGGIC, QTc and more.</span></li>
               <li className="flex gap-2"><span className="text-indigo-400 flex-shrink-0">5.</span><span><strong>One-click Table 1</strong> — publication-ready baseline characteristics with automatic p-values and Excel export.</span></li>
@@ -51,6 +59,31 @@ export default function AboutModal({ onClose }: { onClose: () => void }) {
               <li className="flex gap-2"><span className="text-indigo-400 flex-shrink-0">7.</span><span><strong>Interactive charts</strong> — zoom, hover, and export at up to 600 DPI for publication.</span></li>
               <li className="flex gap-2"><span className="text-indigo-400 flex-shrink-0">8.</span><span><strong>Multi-format I/O</strong> — reads and writes CSV, Excel, SPSS, SAS, and Stata files natively.</span></li>
             </ul>
+          </div>
+
+          {/* Features */}
+          <div className="space-y-2">
+            <h3 className="text-xs font-bold text-gray-900 uppercase tracking-wider border-b border-gray-100 pb-1">Features</h3>
+            <ul className="text-xs text-gray-700 space-y-1.5 list-none pl-3">
+              <li><strong>Descriptive statistics</strong> — Mean, median, IQR, normality tests, Q-Q plots</li>
+              <li><strong>Hypothesis tests</strong> — t-test, ANOVA, Mann-Whitney, Kruskal-Wallis, chi-square, Fisher&apos;s exact</li>
+              <li><strong>Correlation</strong> — Pearson, Spearman, Kendall with significance matrix</li>
+              <li><strong>ROC curves</strong> — AUC, sensitivity/specificity, Youden index, comparing curves</li>
+              <li><strong>Regression models</strong> — Linear, logistic, Poisson, polynomial, mixed effects</li>
+              <li><strong>Survival analysis</strong> — Kaplan-Meier, Cox proportional hazards, Fine-Gray competing risks, landmark</li>
+              <li><strong>Table 1</strong> — Publication-ready baseline characteristics with SMD</li>
+              <li><strong>Propensity score matching</strong> — Balance diagnostics, treatment effect estimation</li>
+              <li><strong>Power analysis</strong> — Sample size calculation, effect size estimation</li>
+              <li><strong>Missing data</strong> — MICE multiple imputation</li>
+            </ul>
+          </div>
+
+          {/* Privacy */}
+          <div className="space-y-2">
+            <h3 className="text-xs font-bold text-gray-900 uppercase tracking-wider border-b border-gray-100 pb-1">Privacy</h3>
+            <p className="text-xs text-gray-700 leading-relaxed">
+              Your file is sent to our server only to be parsed and held in memory for the duration of your session. It is <strong>never written to disk</strong> and is automatically cleared from memory 30 minutes after you stop using the app. No account, no logs of your data, no permanent storage. Avoid uploading data subject to strict regulatory requirements (e.g. identifiable PHI) until a self-host or local-only build is available.
+            </p>
           </div>
 
           {/* Changelog */}
@@ -74,7 +107,7 @@ export default function AboutModal({ onClose }: { onClose: () => void }) {
 
           {/* Footer */}
           <div className="text-[10px] text-gray-400 pt-3 border-t border-gray-100 space-y-1">
-            <p>All computations run locally. Your data never leaves your machine.</p>
+            <p>Files held in memory only — never written to disk. Auto-cleared 30 min after last activity.</p>
             <p>&copy; 2026 Dr. Yusuf Ho&#x15F;o&#x11F;lu. All rights reserved.</p>
           </div>
         </div>
