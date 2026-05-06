@@ -1,9 +1,10 @@
 import { X } from "lucide-react";
 
-const VERSION = "1.5.0";
-const BUILD = 86;
+const VERSION = "1.6.0";
+const BUILD = 87;
 
 const CHANGELOG = [
+  { ver: "1.6.0", date: "2026-05-05", notes: "About reorg: Validation status banner, Tests & Methods table mapping every test to its underlying SciPy/statsmodels/lifelines/scikit-learn function, creator credit. Splash Privacy/Scope/Cost tiles. SEO metadata: SoftwareApplication + WebSite JSON-LD, expanded keywords, canonical, OG locale. Fix: XLSX export (defensive xlsx module shape resolution + visible errors). Fix: Save Session — blob fetch + anchor download instead of iframe (no more SPA navigation away). Fix: privacy copy now reflects actual in-memory-only TTL behaviour. MapMyVisitors widget at 25% scale." },
   { ver: "1.5.0", date: "2026-04-04", notes: "Ctrl+V paste from Excel/CSV, insert column left/right, copy row/column to clipboard, proprietary license" },
   { ver: "1.4.0", date: "2026-04-03", notes: "Right-click context menu, row/column operations, fill blanks (mean/median/MICE), undo/redo, variable rename, decimal formatting" },
   { ver: "1.3.0", date: "2026-04-02", notes: "Model diagnostics, calibration, decision curve analysis, model comparison, bootstrap CI, permutation tests" },
