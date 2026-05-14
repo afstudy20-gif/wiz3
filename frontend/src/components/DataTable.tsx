@@ -1,8 +1,10 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { BookOpen, X } from "lucide-react";
 import { useStore } from "../store";
 import type { ColMeta, CaseCondition, CaseOperator } from "../store";
 import api from "../api";
 import { selectCases, clearCases, getUniqueValues, renameColumn, saveMetadata } from "../api";
+import DataDictionaryPanel from "./DataDictionaryPanel";
 
 // ── Kind cycling ───────────────────────────────────────────────────────────────
 
@@ -374,6 +376,7 @@ export default function DataTable() {
   const [showSaveMenu,   setShowSaveMenu]  = useState(false);
   const [showMissingOnly, setShowMissingOnly] = useState(false);
   const [showSelectCases, setShowSelectCases] = useState(false);
+  const [showDictionary,  setShowDictionary]  = useState(false);
 
   // Drag & drop column reordering
   const [dragIdx,  setDragIdx]  = useState<number | null>(null);
@@ -920,6 +923,18 @@ export default function DataTable() {
         </p>
 
         <div className="flex items-center gap-2">
+          {/* Dictionary modal opener — moved from the Compute combo so the
+              variable-metadata view sits next to the data grid it describes. */}
+          <button
+            onClick={() => setShowDictionary(true)}
+            title="Edit variable labels, value labels, and column metadata"
+            className="text-xs px-2 py-1 rounded-lg border border-indigo-300 text-indigo-600 hover:bg-indigo-50 transition-colors flex items-center gap-1"
+          >
+            <BookOpen size={12} /> Dictionary
+          </button>
+
+          <div className="w-px h-5 bg-gray-200" />
+
           {/* Add Row / Add Column */}
           <button onClick={() => addRow(-1)}
             className="text-xs px-2 py-1 rounded-lg border border-emerald-300 text-emerald-600 hover:bg-emerald-50 transition-colors">
@@ -1570,6 +1585,39 @@ export default function DataTable() {
           </div>
         );
       })()}
+
+      {/* ── Dictionary modal ────────────────────────────────────────────── */}
+      {showDictionary && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onClick={() => setShowDictionary(false)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <BookOpen size={18} className="text-indigo-500" />
+                <h2 className="font-semibold text-gray-800">Variable Dictionary</h2>
+                <span className="text-xs text-gray-400">
+                  Edit labels, value codings, and metadata for every column.
+                </span>
+              </div>
+              <button
+                onClick={() => setShowDictionary(false)}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+                aria-label="Close dictionary"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              <DataDictionaryPanel />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -33,7 +33,6 @@ import PSMPanel from "./components/PSMPanel";
 import RepeatedMeasuresPanel from "./components/RepeatedMeasuresPanel";
 import CategoricalTestsPanel from "./components/CategoricalTestsPanel";
 import ReliabilityPanel from "./components/ReliabilityPanel";
-import DataDictionaryPanel from "./components/DataDictionaryPanel";
 import PlotThemeBar from "./components/PlotThemeBar";
 import SurvivalAdvancedPanel from "./components/SurvivalAdvancedPanel";
 import MissingDataPanel from "./components/MissingDataPanel";
@@ -172,21 +171,12 @@ function TestsCombo() {
 }
 
 function ComputeCombo() {
-  const [sub, setSub] = useState<"compute" | "dictionary">("compute");
+  // Dictionary moved to the Data tab toolbar as a modal. Compute is now a
+  // single panel.
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="flex gap-1 px-4 pt-2 pb-1 bg-gray-50 border-b border-gray-200 flex-shrink-0">
-        {([["compute", "Compute"], ["dictionary", "Dictionary"]] as const).map(([id, label]) => (
-          <button key={id} onClick={() => setSub(id)}
-            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-              sub === id ? "bg-white text-indigo-700 shadow-sm border border-gray-200" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-            }`}>
-            {label}
-          </button>
-        ))}
-      </div>
       <div className="flex-1 p-4 overflow-y-auto">
-        {sub === "compute" ? <ComputePanel /> : <DataDictionaryPanel />}
+        <ComputePanel />
       </div>
     </div>
   );
