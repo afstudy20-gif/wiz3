@@ -46,14 +46,35 @@ user. The code MUST NOT:
 
 Environment variables read by the runner (with defaults):
 
-| Variable                  | Default         | Description                              |
-|---------------------------|-----------------|------------------------------------------|
-| `ENABLE_CODE_RUNNER`      | `0` (disabled)  | Set to `1`/`true` to expose the endpoint |
-| `SANDBOX_CPU_SEC`         | run timeout     | CPU time rlimit (capped at MAX=60 s)     |
-| `SANDBOX_MEM_BYTES`       | 536870912 (512MB) | Address-space rlimit                   |
-| `SANDBOX_FSIZE_BYTES`     | 10485760 (10MB) | Max file size the child can write        |
-| `SANDBOX_NOFILE`          | 64              | Max open file descriptors                |
-| `SANDBOX_NPROC`           | 32              | Max child processes                      |
+| Variable                       | Default         | Description                              |
+|--------------------------------|-----------------|------------------------------------------|
+| `ENABLE_CODE_RUNNER`           | `0` (disabled)  | Set to `1`/`true` to expose the endpoint |
+| `SANDBOX_CPU_SEC`              | run timeout     | CPU time rlimit (capped at MAX=60 s)     |
+| `SANDBOX_MEM_BYTES`            | 536870912 (512MB) | Address-space rlimit                   |
+| `SANDBOX_FSIZE_BYTES`          | 10485760 (10MB) | Max file size the child can write        |
+| `SANDBOX_NOFILE`               | 64              | Max open file descriptors                |
+| `SANDBOX_NPROC`                | 32              | Max child processes                      |
+| `CODE_RUNNER_PER_MIN`          | 6               | Max runs / minute / session_id           |
+| `CODE_RUNNER_PER_HOUR`         | 30              | Max runs / hour / session_id             |
+| `CODE_RUNNER_IP_PER_MIN`       | 10              | Max runs / minute / client IP            |
+| `CODE_RUNNER_IP_PER_HOUR`      | 60              | Max runs / hour / client IP              |
+| `CODE_RUNNER_GLOBAL_PER_MIN`   | 30              | Max runs / minute server-wide            |
+| `CODE_RUNNER_MAX_CONCURRENT`   | 2               | Max concurrent in-flight runs            |
+
+**Hardened production preset** (Render dashboard or `render.yaml`):
+
+```
+ENABLE_CODE_RUNNER=1
+CODE_RUNNER_PER_MIN=2
+CODE_RUNNER_PER_HOUR=10
+CODE_RUNNER_IP_PER_MIN=3
+CODE_RUNNER_IP_PER_HOUR=15
+CODE_RUNNER_GLOBAL_PER_MIN=10
+CODE_RUNNER_MAX_CONCURRENT=1
+```
+
+IP buckets honour `X-Forwarded-For` (set by Render's reverse proxy) so the
+real client IP is rate-limited, not the proxy.
 
 ### Disabling at runtime
 
