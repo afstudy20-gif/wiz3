@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Upload, Info, Zap, BarChart2, ShieldAlert, ListChecks, Sparkles, NotebookPen, FileText, HeartPulse, Activity, Layers } from "lucide-react";
+import { Upload, Info, Zap, BarChart2, ShieldAlert, ListChecks, Sparkles, NotebookPen, FileText, HeartPulse, Workflow, Layers } from "lucide-react";
 import { uploadFile } from "../api";
 import api from "../api";
 import { useStore } from "../store";
@@ -192,7 +192,7 @@ export default function UploadZone() {
             { url: "https://pdf.drtr.uk/",   Icon: FileText,    name: "PDF",        desc: "Annotate &amp; sign in browser" },
             { url: "https://ecgcal.drtr.uk/",Icon: HeartPulse,  name: "ECG Caliper",desc: "Digital ECG wave analyzer" },
             { url: "https://noedw.drtr.uk",  Icon: Layers,      name: "noedw",      desc: "Clinical utility (coming soon)" },
-            { url: "https://low.drtr.uk",    Icon: Activity,    name: "low",        desc: "Clinical utility (coming soon)" },
+            { url: "https://flow.drtr.uk",   Icon: Workflow,    name: "AcademicFlow", desc: "Journal flowchart designer" },
           ].map(({ url, Icon, name, desc }) => (
             <a
               key={url}
