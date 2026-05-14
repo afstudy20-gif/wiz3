@@ -2003,14 +2003,19 @@ class PSMRequest(BaseModel):
     treatment_col: str
     covariates: List[str]
     outcome_col: Optional[str] = None
-    caliper: Optional[float] = 0.2        # fraction of SD of PS
+    caliper: Optional[float] = 0.2        # fraction of SD (of logit-PS if caliper_scale='logit', else PS)
+    caliper_scale: Optional[str] = "logit"  # 'logit' (Austin 2011) or 'raw'
     ratio: Optional[int] = 1             # 1:ratio matching (1:1 default)
     imputation: Optional[str] = "listwise"
+    trim_common_support: Optional[bool] = False  # Crump 2009 trimming
+    random_state: Optional[int] = 42     # reproducibility for LR solver tie-breaking
 
 
-def _compute_smd(s_treated: pd.Series, s_control: pd.Series) -> float:
-    """Standardized Mean Difference for one covariate."""
-    # Convert categorical/object to numeric via label encoding
+def _smd_columns(s_treated: pd.Series, s_control: pd.Series) -> tuple[pd.Series, pd.Series, bool]:
+    """Coerce two covariate series to numeric (label-encoded if categorical).
+
+    Returns (treated_numeric, control_numeric, is_binary).
+    """
     if s_treated.dtype == object or str(s_treated.dtype).startswith("category"):
         combined = pd.concat([s_treated, s_control]).dropna()
         cats = sorted(combined.unique().tolist(), key=str)
@@ -2021,20 +2026,71 @@ def _compute_smd(s_treated: pd.Series, s_control: pd.Series) -> float:
     s_treated = pd.to_numeric(s_treated, errors="coerce").dropna()
     s_control = pd.to_numeric(s_control, errors="coerce").dropna()
 
+    is_binary = pd.concat([s_treated, s_control]).nunique() <= 2
+    return s_treated, s_control, is_binary
+
+
+def _compute_smd(s_treated: pd.Series, s_control: pd.Series,
+                 denom_sd: Optional[float] = None) -> float:
+    """Standardized Mean Difference for one covariate.
+
+    Args:
+        denom_sd: If supplied, uses this pre-computed pooled SD (Austin 2011
+            convention: pooled SD from the UNMATCHED sample is the denominator
+            both before and after matching, so that the change reflects only
+            the numerator shift). Defaults to in-sample pooled SD when None.
+    """
+    s_treated, s_control, is_binary = _smd_columns(s_treated, s_control)
     if len(s_treated) == 0 or len(s_control) == 0:
         return 0.0
 
-    n_uniq = pd.concat([s_treated, s_control]).nunique()
-    if n_uniq <= 2:
+    if is_binary:
         p1 = float(s_treated.mean())
         p0 = float(s_control.mean())
-        denom = np.sqrt((p1 * (1 - p1) + p0 * (1 - p0)) / 2)
+        denom = denom_sd if denom_sd is not None else np.sqrt((p1 * (1 - p1) + p0 * (1 - p0)) / 2)
         return float(abs(p1 - p0) / denom) if denom > 1e-9 else 0.0
-    # Continuous variable
+
     m1, m0 = float(s_treated.mean()), float(s_control.mean())
-    sd1, sd0 = float(s_treated.std(ddof=1)), float(s_control.std(ddof=1))
-    denom = np.sqrt((sd1 ** 2 + sd0 ** 2) / 2)
-    return float(abs(m1 - m0) / denom) if denom > 1e-9 else 0.0
+    if denom_sd is None:
+        sd1, sd0 = float(s_treated.std(ddof=1)), float(s_control.std(ddof=1))
+        denom_sd = np.sqrt((sd1 ** 2 + sd0 ** 2) / 2)
+    return float(abs(m1 - m0) / denom_sd) if denom_sd > 1e-9 else 0.0
+
+
+def _pooled_sd(s_treated: pd.Series, s_control: pd.Series) -> float:
+    """Pooled SD denominator (Austin 2011) from the unmatched sample."""
+    s_treated, s_control, is_binary = _smd_columns(s_treated, s_control)
+    if len(s_treated) == 0 or len(s_control) == 0:
+        return 0.0
+    if is_binary:
+        p1 = float(s_treated.mean()); p0 = float(s_control.mean())
+        return float(np.sqrt((p1 * (1 - p1) + p0 * (1 - p0)) / 2))
+    sd1 = float(s_treated.std(ddof=1)); sd0 = float(s_control.std(ddof=1))
+    return float(np.sqrt((sd1 ** 2 + sd0 ** 2) / 2))
+
+
+def _variance_ratio(s_treated: pd.Series, s_control: pd.Series) -> Optional[float]:
+    """Rubin's variance ratio σ²_treated / σ²_control. Target range 0.5–2.0."""
+    s_treated, s_control, is_binary = _smd_columns(s_treated, s_control)
+    if is_binary or len(s_treated) < 2 or len(s_control) < 2:
+        return None
+    v1 = float(s_treated.var(ddof=1)); v0 = float(s_control.var(ddof=1))
+    if v0 <= 1e-12:
+        return None
+    return round(v1 / v0, 4)
+
+
+def _ks_p(s_treated: pd.Series, s_control: pd.Series) -> Optional[float]:
+    """Two-sample KS test p-value for distributional balance."""
+    s_treated, s_control, is_binary = _smd_columns(s_treated, s_control)
+    if is_binary or len(s_treated) < 2 or len(s_control) < 2:
+        return None
+    from scipy.stats import ks_2samp
+    try:
+        _, p = ks_2samp(s_treated.values, s_control.values)
+        return round(float(p), 6)
+    except Exception:
+        return None
 
 
 @router.post("/psm")
@@ -2078,36 +2134,64 @@ def _run_psm(req: PSMRequest):
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    lr = LogisticRegression(max_iter=1000, solver="lbfgs", C=1.0)
+    lr = LogisticRegression(max_iter=1000, solver="lbfgs", C=1.0,
+                            random_state=req.random_state)
     lr.fit(X_scaled, y)
     ps = lr.predict_proba(X_scaled)[:, 1]     # propensity score for each row
+    # Logit of PS — Austin 2011 recommends matching on this scale because the
+    # raw PS is bounded [0,1] and gets compressed near the tails.
+    ps_clip = np.clip(ps, 1e-6, 1 - 1e-6)
+    logit_ps = np.log(ps_clip / (1.0 - ps_clip))
 
     df = df.copy()
     df["_ps_"] = ps
+    df["_logit_ps_"] = logit_ps
     df["_treat_"] = y
 
-    # ── Step 2: Nearest-Neighbour matching with caliper (without replacement) ─
-    caliper_dist = (req.caliper or 0.2) * ps.std()
-    ratio = max(1, req.ratio or 1)
-
-    treated_idx = np.where(y == 1)[0]
-    control_idx = np.where(y == 0)[0]
-
-    if len(treated_idx) == 0 or len(control_idx) == 0:
+    # ── Step 2: Optional Crump 2009 common-support trim ──────────────────────
+    treated_idx_all = np.where(y == 1)[0]
+    control_idx_all = np.where(y == 0)[0]
+    if len(treated_idx_all) == 0 or len(control_idx_all) == 0:
         raise HTTPException(status_code=422, detail="Need both treated (1) and control (0) patients.")
 
-    # KD-tree on control propensity scores
-    ps_control = ps[control_idx].reshape(-1, 1)
+    support_lo, support_hi = float(ps.min()), float(ps.max())
+    n_trimmed = 0
+    keep_mask = np.ones_like(y, dtype=bool)
+    if req.trim_common_support:
+        support_lo = max(ps[treated_idx_all].min(), ps[control_idx_all].min())
+        support_hi = min(ps[treated_idx_all].max(), ps[control_idx_all].max())
+        keep_mask = (ps >= support_lo) & (ps <= support_hi)
+        n_trimmed = int((~keep_mask).sum())
+
+    treated_idx = np.where((y == 1) & keep_mask)[0]
+    control_idx = np.where((y == 0) & keep_mask)[0]
+    if len(treated_idx) == 0 or len(control_idx) == 0:
+        raise HTTPException(status_code=422, detail="No units remain after common-support trim. Disable trimming or widen the support.")
+
+    # ── Step 3: Nearest-Neighbour matching with logit-PS caliper ─────────────
+    scale = (req.caliper_scale or "logit").lower()
+    if scale not in ("logit", "raw"):
+        raise HTTPException(status_code=422, detail="caliper_scale must be 'logit' or 'raw'.")
+    distance_vec = logit_ps if scale == "logit" else ps
+    caliper_sd = float(distance_vec[keep_mask].std())
+    caliper_dist = (req.caliper or 0.2) * caliper_sd
+    ratio = max(1, req.ratio or 1)
+
+    # KD-tree on control distance values (matching scale)
+    ctrl_dist = distance_vec[control_idx].reshape(-1, 1)
     knn = NearestNeighbors(n_neighbors=min(ratio * 5, len(control_idx)), metric="euclidean")
-    knn.fit(ps_control)
+    knn.fit(ctrl_dist)
 
     matched_treated = []
     matched_controls = []
     used_controls = set()
 
-    for ti in treated_idx:
-        ps_t = np.array([[ps[ti]]])
-        distances, neighbors = knn.kneighbors(ps_t)
+    # Iterate treated units in order of decreasing PS — harder-to-match first
+    # gets first pick of controls (Austin: greedy NN with caliper).
+    ordered_treated = treated_idx[np.argsort(-distance_vec[treated_idx])]
+    for ti in ordered_treated:
+        q = np.array([[distance_vec[ti]]])
+        distances, neighbors = knn.kneighbors(q)
         chosen = []
         for dist, nb in zip(distances[0], neighbors[0]):
             if dist <= caliper_dist and control_idx[nb] not in used_controls:
@@ -2116,8 +2200,8 @@ def _run_psm(req: PSMRequest):
                 if len(chosen) == ratio:
                     break
         if len(chosen) == ratio:   # only keep fully matched treated units
-            matched_treated.append(ti)
-            matched_controls.extend(chosen)
+            matched_treated.append(int(ti))
+            matched_controls.extend(int(c) for c in chosen)
 
     n_matched_treated = len(matched_treated)
     n_matched_controls = len(matched_controls)
@@ -2138,17 +2222,29 @@ def _run_psm(req: PSMRequest):
         match_ids.append(i // ratio)  # controls get same match_id as their treated pair
     df_matched["_match_id_"] = match_ids
 
-    # ── Step 3: SMD before and after matching ─────────────────────────────────
+    # ── Step 4: SMD before and after matching ────────────────────────────────
+    # Austin 2011: use the pooled SD from the UNMATCHED sample as the common
+    # denominator for both before and after, so the change reflects only the
+    # numerator shift (not a moving-target SD).
     smd_before, smd_after = {}, {}
-    treat_mask = df["_treat_"].values   # numpy array, same length as df (reset index)
+    var_ratio_before, var_ratio_after = {}, {}
+    ks_before, ks_after = {}, {}
+    treat_mask = df["_treat_"].values
     for cov in req.covariates:
         col   = df[cov]
         col_m = df_matched[cov]
-        smd_before[cov] = round(_compute_smd(
-            col[treat_mask == 1], col[treat_mask == 0]), 4)
-        smd_after[cov]  = round(_compute_smd(
-            col_m[df_matched["_treat_"] == 1],
-            col_m[df_matched["_treat_"] == 0]), 4)
+        denom = _pooled_sd(col[treat_mask == 1], col[treat_mask == 0])
+        smd_before[cov] = round(_compute_smd(col[treat_mask == 1], col[treat_mask == 0],
+                                              denom_sd=denom), 4)
+        smd_after[cov]  = round(_compute_smd(col_m[df_matched["_treat_"] == 1],
+                                              col_m[df_matched["_treat_"] == 0],
+                                              denom_sd=denom), 4)
+        var_ratio_before[cov] = _variance_ratio(col[treat_mask == 1], col[treat_mask == 0])
+        var_ratio_after[cov]  = _variance_ratio(col_m[df_matched["_treat_"] == 1],
+                                                 col_m[df_matched["_treat_"] == 0])
+        ks_before[cov] = _ks_p(col[treat_mask == 1], col[treat_mask == 0])
+        ks_after[cov]  = _ks_p(col_m[df_matched["_treat_"] == 1],
+                                col_m[df_matched["_treat_"] == 0])
 
     avg_smd_before = float(np.mean(list(smd_before.values())))
     avg_smd_after  = float(np.mean(list(smd_after.values())))
@@ -2158,8 +2254,12 @@ def _run_psm(req: PSMRequest):
     n_all_control = int((y == 0).sum())
     n_unmatched   = n_all_treated - n_matched_treated
 
-    # Balance flag: all SMDs < 0.10 after matching
-    balance_achieved = all(v < 0.10 for v in smd_after.values())
+    # Balance flag: all SMDs < 0.10 after matching AND every variance ratio in [0.5, 2.0]
+    var_ratios_ok = all(
+        (v is None) or (0.5 <= v <= 2.0)
+        for v in var_ratio_after.values()
+    )
+    balance_achieved = bool(all(v < 0.10 for v in smd_after.values()) and var_ratios_ok)
 
     # ── Step 4: PS distribution for overlap plot ──────────────────────────────
     ps_dist = {
@@ -2261,13 +2361,21 @@ def _run_psm(req: PSMRequest):
         "n_matched_pairs":    n_matched_treated,
         "n_matched_controls": n_matched_controls,
         "n_unmatched":        n_unmatched,
+        "n_trimmed_common_support": n_trimmed,
+        "caliper_scale":      scale,
         "caliper_used":       round(float(caliper_dist), 6),
+        "caliper_sd":         round(caliper_sd, 6),
+        "common_support":     {"lo": round(support_lo, 6), "hi": round(support_hi, 6)},
         "balance_achieved":   balance_achieved,
         "avg_smd_before":     round(avg_smd_before, 4),
         "avg_smd_after":      round(avg_smd_after, 4),
         "reduction_pct":      round(reduction_pct, 1),
         "smd_before":         smd_before,
         "smd_after":          smd_after,
+        "variance_ratio_before": var_ratio_before,
+        "variance_ratio_after":  var_ratio_after,
+        "ks_p_before":        ks_before,
+        "ks_p_after":         ks_after,
         "ps_distribution":    ps_dist,
         "outcome_result":     outcome_result,
         "matched_session_id": req.session_id + "_psm",

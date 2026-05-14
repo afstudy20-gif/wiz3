@@ -228,6 +228,10 @@ export default function PSMPanel() {
   const [outcomeCol, setOutcomeCol] = useState("");
   const [covariates, setCovariates] = useState<string[]>([]);
   const [caliper,    setCaliper]    = useState(0.2);
+  const [caliperScale, setCaliperScale] = useState<"logit" | "raw">("logit");
+  const [trimCommonSupport, setTrimCommonSupport] = useState(false);
+  const [ratio,        setRatio]        = useState(1);
+  const [randomState,  setRandomState]  = useState<number>(42);
   const [covFilter,  setCovFilter]  = useState("");
 
   // Result & UI
@@ -250,6 +254,10 @@ export default function PSMPanel() {
         covariates,
         outcome_col:   outcomeCol || undefined,
         caliper,
+        caliper_scale: caliperScale,
+        trim_common_support: trimCommonSupport,
+        ratio,
+        random_state: Number.isFinite(randomState) ? randomState : undefined,
       });
       setResult(res.data);
     } catch (e: any) {
@@ -375,6 +383,45 @@ export default function PSMPanel() {
             <span className="text-indigo-500">0.20 ★ standard</span>
             <span>0.50 (loose)</span>
           </div>
+          <div className="pt-2 border-t border-gray-100 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-gray-500 font-medium flex items-center gap-1">
+                Caliper scale
+                <Tip wide text="Austin (2011) recommends matching on the LOGIT of the propensity score: the raw PS is bounded [0,1] and gets compressed near the tails, so a constant caliper is far too loose at extreme values. 'Logit' is the publication standard." />
+              </span>
+              <div className="flex gap-1">
+                {(["logit", "raw"] as const).map((s) => (
+                  <button key={s} onClick={() => setCaliperScale(s)}
+                    className={`px-2 py-0.5 text-[10px] rounded border transition-colors ${caliperScale === s ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-300 text-gray-500 hover:bg-gray-50"}`}>
+                    {s === "logit" ? "Logit ★" : "Raw PS"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input type="checkbox" className="accent-indigo-500 mt-0.5"
+                checked={trimCommonSupport} onChange={(e) => setTrimCommonSupport(e.target.checked)} />
+              <span className="text-[10px] text-gray-600 leading-tight">
+                <span className="font-medium">Trim to common support</span>
+                <Tip wide text="Crump et al. (2009): exclude treated and control units with PS outside the overlap region [max(min_treated, min_control), min(max_treated, max_control)] BEFORE matching. Recommended when the two groups' PS distributions only partially overlap." />
+                <span className="block text-gray-400">Crump 2009 trimming</span>
+              </span>
+            </label>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-gray-500 font-medium">Ratio</span>
+              <select className="select text-[10px] py-0.5 flex-1" value={ratio} onChange={(e) => setRatio(parseInt(e.target.value, 10))}>
+                {[1, 2, 3, 4, 5].map((k) => <option key={k} value={k}>1 : {k}</option>)}
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-gray-500 font-medium flex items-center gap-1">
+                Seed
+                <Tip text="Random seed for the propensity-score logistic regression solver. Use any integer for reproducibility." />
+              </span>
+              <input type="number" className="select text-[10px] py-0.5 flex-1"
+                value={randomState} onChange={(e) => setRandomState(parseInt(e.target.value, 10))} />
+            </div>
+          </div>
         </div>
 
         {/* Run */}
@@ -408,7 +455,12 @@ export default function PSMPanel() {
                   <p className="text-xs text-gray-600 mt-1">
                     Matched {result.n_matched_pairs} treated : {result.n_matched_controls} control pairs
                     ({result.n_unmatched} treated patients unmatched and excluded).
-                    Caliper = {result.caliper_used.toFixed(4)} (PS units).
+                  </p>
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    Caliper = {result.caliper_used.toFixed(4)} on the <b>{result.caliper_scale ?? "logit"}</b> scale ({caliper} × SD = {result.caliper_used.toFixed(4)}).
+                    {result.n_trimmed_common_support > 0 && (
+                      <> · {result.n_trimmed_common_support} units trimmed (common support [{result.common_support?.lo?.toFixed(3)}, {result.common_support?.hi?.toFixed(3)}]).</>
+                    )}
                   </p>
                 </div>
               </div>
@@ -515,6 +567,8 @@ export default function PSMPanel() {
                       <th className="text-left px-3 py-2 font-medium">Covariate</th>
                       <th className="text-right px-3 py-2 font-medium">SMD Before</th>
                       <th className="text-right px-3 py-2 font-medium">SMD After</th>
+                      <th className="text-right px-3 py-2 font-medium" title="Rubin's variance ratio σ²_treated / σ²_control. Target 0.5–2.0.">Var Ratio</th>
+                      <th className="text-right px-3 py-2 font-medium" title="Two-sample KS test p-value after matching. Higher = better distributional balance.">KS p (after)</th>
                       <th className="text-right px-3 py-2 font-medium">Reduction</th>
                       <th className="text-center px-3 py-2 font-medium">Balanced</th>
                     </tr>
@@ -525,11 +579,22 @@ export default function PSMPanel() {
                       const after  = result.smd_after[cov];
                       const reduction = before > 0 ? ((before - after) / before * 100).toFixed(1) : "—";
                       const balanced = after < threshold;
+                      const vr = result.variance_ratio_after?.[cov] as number | null | undefined;
+                      const vrBefore = result.variance_ratio_before?.[cov] as number | null | undefined;
+                      const ksAfter = result.ks_p_after?.[cov] as number | null | undefined;
+                      const vrOk = vr == null || (vr >= 0.5 && vr <= 2.0);
                       return (
                         <tr key={cov} className="border-b border-gray-100 hover:bg-gray-50">
                           <td className="px-3 py-1.5 font-mono text-gray-800">{cov}</td>
                           <td className={`px-3 py-1.5 text-right font-mono ${smdColor(before)}`}>{before.toFixed(4)}</td>
                           <td className={`px-3 py-1.5 text-right font-mono font-semibold ${smdColor(after)}`}>{after.toFixed(4)}</td>
+                          <td className={`px-3 py-1.5 text-right font-mono ${vrOk ? "text-gray-600" : "text-amber-600 font-semibold"}`}
+                              title={vrBefore != null ? `Before: ${vrBefore.toFixed(3)}` : ""}>
+                            {vr != null ? vr.toFixed(3) : "—"}
+                          </td>
+                          <td className={`px-3 py-1.5 text-right font-mono ${ksAfter != null && ksAfter < 0.05 ? "text-red-600 font-semibold" : "text-gray-500"}`}>
+                            {ksAfter != null ? fmtP(ksAfter) : "—"}
+                          </td>
                           <td className="px-3 py-1.5 text-right text-gray-500">{reduction}%</td>
                           <td className="px-3 py-1.5 text-center">
                             <span className={`inline-block text-[9px] font-semibold border rounded-full px-1.5 py-0.5 ${
@@ -547,6 +612,7 @@ export default function PSMPanel() {
                       <td className="px-3 py-1.5 font-semibold text-gray-700">Average</td>
                       <td className={`px-3 py-1.5 text-right font-mono font-semibold ${smdColor(result.avg_smd_before)}`}>{result.avg_smd_before.toFixed(4)}</td>
                       <td className={`px-3 py-1.5 text-right font-mono font-semibold ${smdColor(result.avg_smd_after)}`}>{result.avg_smd_after.toFixed(4)}</td>
+                      <td className="px-3 py-1.5 text-gray-400" colSpan={2}>—</td>
                       <td className="px-3 py-1.5 text-right text-indigo-600 font-semibold">{result.reduction_pct}%</td>
                       <td className="px-3 py-1.5 text-center">
                         <span className={`inline-block text-[9px] font-semibold border rounded-full px-1.5 py-0.5 ${
@@ -560,7 +626,7 @@ export default function PSMPanel() {
                 </table>
               </div>
               <p className="text-[10px] text-gray-400">
-                Reference: Austin PC (2011). <em>Multivariate Behavioral Research</em>. SMD &lt; 0.10 after matching = adequate balance for publication (Q1/Q2 cardiology journals).
+                Reference: Austin PC (2011). <em>Multivariate Behavioral Research</em>. Adequate balance requires SMD &lt; 0.10 (numerator) AND variance ratio in [0.5, 2.0] (Rubin's rule). KS p-value tests distributional balance (not just mean / variance). SMDs use the pooled SD from the unmatched sample as a fixed denominator before &amp; after matching, so any change reflects only the numerator shift.
               </p>
             </div>
 
