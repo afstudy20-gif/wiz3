@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Upload, Info, Zap, BarChart2, ShieldAlert, ListChecks, Sparkles } from "lucide-react";
 import { uploadFile } from "../api";
 import api from "../api";
@@ -13,6 +13,27 @@ export default function UploadZone() {
   const [error, setError] = useState<string | null>(null);
   const [showAbout, setShowAbout] = useState(false);
   const [mode, setMode] = useState<"home" | "power">("home");
+  const mapHostRef = useRef<HTMLDivElement | null>(null);
+
+  // MapMyVisitors widget — splash-only. Mount the third-party script on
+  // entry, tear it down on unmount so it never runs once the user has a
+  // session open. Skipped on power-analysis sub-mode too.
+  useEffect(() => {
+    if (mode !== "home") return;
+    const host = mapHostRef.current;
+    if (!host) return;
+    const s = document.createElement("script");
+    s.type = "text/javascript";
+    s.id = "mapmyvisitors";
+    s.async = true;
+    s.src = "//mapmyvisitors.com/map.js?d=1n_K4PcW6y-sCZgSR6a9Kd9gv5VkVZbm_rxi4AJQV4o&cl=ffffff&w=a";
+    host.appendChild(s);
+    return () => {
+      try { host.removeChild(s); } catch { /* already gone */ }
+      // Best-effort: remove any DOM the widget appended outside our host.
+      document.querySelectorAll("#mapmyvisitors").forEach((el) => el.remove());
+    };
+  }, [mode]);
 
   const handle = useCallback(async (file: File) => {
     setLoading(true);
@@ -172,6 +193,23 @@ export default function UploadZone() {
       </button>
 
       <p className="text-[11px] text-gray-300 mt-2">&copy; 2026 Dr. Yusuf Ho&#x15F;o&#x11F;lu. All rights reserved.</p>
+
+      {/* MapMyVisitors widget — splash only. Scaled to 25% via transform. */}
+      <div
+        ref={mapHostRef}
+        aria-hidden="true"
+        style={{
+          width: "25%",
+          transform: "scale(0.25)",
+          transformOrigin: "bottom right",
+          position: "fixed",
+          bottom: 0,
+          right: 0,
+          zIndex: 40,
+          pointerEvents: "auto",
+          opacity: 0.85,
+        }}
+      />
     </div>
   );
 }
