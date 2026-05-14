@@ -41,6 +41,7 @@ export const runLogisticTable = (data: object) => api.post("/api/models/logistic
 export const runPoisson  = (data: object) => api.post("/api/models/poisson", data);
 export const runKM = (data: object) => api.post("/api/models/survival/km", data);
 export const runCox = (data: object) => api.post("/api/models/survival/cox", data);
+export const runCoxRCS = (data: object) => api.post("/api/models/survival/cox_rcs", data);
 export const runPolynomial  = (data: object) => api.post("/api/models/polynomial", data);
 export const runLMM         = (data: object) => api.post("/api/models/lmm", data);
 export const runGamma       = (data: object) => api.post("/api/models/gamma", data);
@@ -154,3 +155,33 @@ export const selectCases = (sessionId: string, conditions: object[]) =>
   api.post(`/api/sessions/${sessionId}/select_cases`, { conditions });
 export const clearCases  = (sessionId: string) =>
   api.delete(`/api/sessions/${sessionId}/select_cases`);
+
+// ── Code runner ────────────────────────────────────────────────────────────
+
+export interface CodeRunnerStatus {
+  enabled: boolean;
+  max_timeout_s: number;
+  max_code_bytes: number;
+  rate_limit_per_min: number;
+  rate_limit_per_hour: number;
+}
+
+export interface CodeRunRequest {
+  session_id: string;
+  code: string;
+  timeout?: number;
+}
+
+export interface CodeRunResponse {
+  stdout: string;
+  stderr: string;
+  figures: string[];   // base64 PNGs
+  exit_code: number;
+  time_used_s: number;
+  error: string | null;
+  timed_out: boolean;
+}
+
+export const codeRunnerStatus = () => api.get<CodeRunnerStatus>("/api/code/status");
+export const runCode = (data: CodeRunRequest, signal?: AbortSignal) =>
+  api.post<CodeRunResponse>("/api/code/run", data, { signal });

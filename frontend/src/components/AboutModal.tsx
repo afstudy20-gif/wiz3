@@ -1,9 +1,10 @@
 import { X } from "lucide-react";
 
-const VERSION = "1.6.0";
-const BUILD = 87;
+const VERSION = "1.7.0";
+const BUILD = 88;
 
 const CHANGELOG = [
+  { ver: "1.7.0", date: "2026-05-14", notes: "RCS Cox time-to-event outcome with custom knot positions (e.g. clinical 70/100/130/160 mg/dL as a sensitivity analysis to Harrell percentiles). New Cox-RCS multivariable model: 1 or 2 RCS terms + additive linear covariates + optional RCS × RCS interaction with LR test and 2D HR contour plot — supports the full Surv(time,event) ~ rcs(LDL,4) * rcs(AGE,4) + ... workflow. New Code tab: server-side Python sandbox (gated by ENABLE_CODE_RUNNER) with import allowlist, rlimits, optional network unshare, audit log, and per-session rate limit. df is auto-injected; matplotlib figures captured. Templates for the three canonical Cox-RCS analysis steps." },
   { ver: "1.6.0", date: "2026-05-05", notes: "About reorg: Validation status banner, Tests & Methods table mapping every test to its underlying SciPy/statsmodels/lifelines/scikit-learn function, creator credit. Splash Privacy/Scope/Cost tiles. SEO metadata: SoftwareApplication + WebSite JSON-LD, expanded keywords, canonical, OG locale. Fix: XLSX export (defensive xlsx module shape resolution + visible errors). Fix: Save Session — blob fetch + anchor download instead of iframe (no more SPA navigation away). Fix: privacy copy now reflects actual in-memory-only TTL behaviour. MapMyVisitors widget at 25% scale." },
   { ver: "1.5.0", date: "2026-04-04", notes: "Ctrl+V paste from Excel/CSV, insert column left/right, copy row/column to clipboard, proprietary license" },
   { ver: "1.4.0", date: "2026-04-03", notes: "Right-click context menu, row/column operations, fill blanks (mean/median/MICE), undo/redo, variable rename, decimal formatting" },
@@ -81,6 +82,7 @@ const METHODS: MethodGroup[] = [
       { name: "Kaplan-Meier curves", impl: "lifelines.KaplanMeierFitter" },
       { name: "Log-rank test (multi-group)", impl: "lifelines.statistics.logrank_test / multivariate_logrank_test" },
       { name: "Cox proportional hazards", impl: "lifelines.CoxPHFitter" },
+      { name: "Cox-RCS (1 or 2 splines + interaction)", impl: "lifelines.CoxPHFitter + Harrell RCS basis" },
       { name: "Schoenfeld residuals (PH check)", impl: "lifelines diagnostics" },
       { name: "Fine-Gray competing risks", impl: "lifelines (CRC) / custom" },
       { name: "Landmark analysis", impl: "lifelines + custom slicing" },

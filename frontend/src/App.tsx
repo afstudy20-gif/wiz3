@@ -1,7 +1,7 @@
 import "./index.css";
-import { Component, useState, type ReactNode } from "react";
-import { BarChart2, Table2, FlaskConical, GitMerge, Brain, X, TrendingUp, ClipboardList, Zap, Calculator, Grid3x3, Grid2x2, Shapes, FolderOpen, Target, Filter, Info } from "lucide-react";
-import { clearCases, saveSession as saveSessionApi } from "./api";
+import { Component, useEffect, useState, type ReactNode } from "react";
+import { BarChart2, Table2, FlaskConical, GitMerge, Brain, X, TrendingUp, ClipboardList, Zap, Calculator, Grid3x3, Grid2x2, Shapes, FolderOpen, Target, Filter, Info, Terminal } from "lucide-react";
+import { clearCases, codeRunnerStatus, saveSession as saveSessionApi } from "./api";
 import AboutModal from "./components/AboutModal";
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
@@ -37,6 +37,7 @@ import DataDictionaryPanel from "./components/DataDictionaryPanel";
 import PlotThemeBar from "./components/PlotThemeBar";
 import SurvivalAdvancedPanel from "./components/SurvivalAdvancedPanel";
 import MissingDataPanel from "./components/MissingDataPanel";
+import CodePanel from "./components/CodePanel";
 
 const TABS = [
   { id: "data",        label: "Data",        icon: Table2 },
@@ -51,6 +52,7 @@ const TABS = [
   { id: "compute",     label: "Compute",     icon: Calculator },
   { id: "psm",         label: "PSM",         icon: Target },
   { id: "missing",     label: "Missing",     icon: Filter },
+  { id: "code",        label: "Code",        icon: Terminal },
 ];
 
 /** Download file via hidden iframe — most reliable cross-platform method.
@@ -236,6 +238,17 @@ export default function App() {
   const { session, activeTab, setActiveTab, clearSession, showGrid, toggleGrid, caseFilter, setCaseFilter } = useStore();
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
+  const [codeRunnerEnabled, setCodeRunnerEnabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    codeRunnerStatus()
+      .then((r) => { if (!cancelled) setCodeRunnerEnabled(!!r.data.enabled); })
+      .catch(() => { if (!cancelled) setCodeRunnerEnabled(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const visibleTabs = TABS.filter((t) => t.id !== "code" || codeRunnerEnabled === true);
 
   const handleOpenNew = () => setShowSaveModal(true);
 
@@ -357,7 +370,7 @@ export default function App() {
         {/* Row 2: tab strip — scrollable so tabs are never clipped */}
         <nav className="flex gap-0.5 px-3 pb-1.5 overflow-x-auto"
           style={{ scrollbarWidth: "none" }}>
-          {TABS.map(({ id, label, icon: Icon }) => (
+          {visibleTabs.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               onClick={() => setActiveTab(id)}
@@ -388,6 +401,7 @@ export default function App() {
           {activeTab === "compute"     && <ComputeCombo />}
           {activeTab === "psm"         && <div className="flex-1 p-4 overflow-y-auto"><PSMPanel /></div>}
           {activeTab === "missing"     && <div className="flex-1 overflow-y-auto"><MissingDataPanel /></div>}
+          {activeTab === "code"        && <div className="flex-1 overflow-y-auto"><CodePanel /></div>}
         </ErrorBoundary>
       </main>
     </div>

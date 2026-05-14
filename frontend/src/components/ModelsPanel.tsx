@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import Plot from "../PlotComponent";
 import { useStore } from "../store";
-import { runLinear, runLogistic, runKM, runCox, runLogisticTable, runRCS, runPoisson, getSparklines } from "../api";
+import { runLinear, runLogistic, runKM, runCox, runLogisticTable, runRCS, runCoxRCS, runPoisson, getSparklines } from "../api";
 import { Tip, InfoBanner } from "./Tip";
 import ResultExporter from "./ResultExporter";
 import PlotExporter from "./PlotExporter";
@@ -59,6 +59,213 @@ const MODEL_GUIDANCE: Record<string, { use: string; check: string; interpret: st
 };
 
 // ── p-value adjustment for one/two-tailed hypothesis ─────────────────────────
+// ── Cox-RCS result rendering ────────────────────────────────────────────────
+
+function fmtP(p: number | null | undefined): string {
+  if (p == null || Number.isNaN(p)) return "—";
+  if (p < 0.001) return "<0.001";
+  return p.toFixed(3);
+}
+
+function CoxRCSResultPanel({ result }: { result: any }) {
+  const coefs = result.coefficients as Array<{ name: string; coef: number; hr: number; se: number; z: number | null; p: number | null; ci_low: number; ci_high: number }>;
+  const curves = (result.curves_1d || []) as Array<{ column: string; x: number[]; hr: number[]; lower: number[]; upper: number[]; knots: number[]; ref: number }>;
+  const surface = result.surface_2d as null | { x_col: string; y_col: string; x: number[]; y: number[]; hr: number[][]; ref: Record<string, number> };
+  const interaction = result.interaction as null | { lr_stat?: number; df?: number; p?: number; error?: string };
+  const nonlinearity = (result.nonlinearity || {}) as Record<string, { wald: number | null; df: number; p: number | null }>;
+
+  return (
+    <div className="panel space-y-4">
+      <div className="flex flex-wrap items-baseline gap-3 border-b border-gray-100 pb-2">
+        <h4 className="font-semibold text-gray-900">Cox proportional hazards (RCS)</h4>
+        <span className="text-xs text-gray-500">
+          n = {result.n}, events = {result.n_events}, C-index = {result.concordance?.toFixed(3) ?? "—"}
+          {result.aic != null && <>, AIC = {result.aic.toFixed(1)}</>}
+        </span>
+      </div>
+
+      {/* Nonlinearity tests per spline term */}
+      {Object.keys(nonlinearity).length > 0 && (
+        <div className="space-y-1">
+          <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Nonlinearity (Wald)</div>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(nonlinearity).map(([col, nl]) => (
+              <span key={col} className={`text-xs px-2 py-1 rounded border ${nl.p != null && nl.p < 0.05 ? "bg-indigo-50 text-indigo-700 border-indigo-200" : "bg-gray-50 text-gray-600 border-gray-200"}`}>
+                <b>{col}</b>: χ²({nl.df}) = {nl.wald?.toFixed(2) ?? "—"}, p = {fmtP(nl.p)}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Interaction LR test */}
+      {interaction && (
+        <div className={`text-xs p-2 rounded border ${interaction.p != null && interaction.p < 0.05 ? "bg-amber-50 text-amber-900 border-amber-200" : "bg-gray-50 text-gray-700 border-gray-200"}`}>
+          <span className="font-semibold uppercase tracking-wider text-[10px] block mb-0.5">RCS × RCS interaction (LR test)</span>
+          {interaction.error ? (
+            <span className="text-red-600">{interaction.error}</span>
+          ) : (
+            <>χ²({interaction.df}) = {interaction.lr_stat?.toFixed(2)}, p = {fmtP(interaction.p)}</>
+          )}
+        </div>
+      )}
+
+      {/* 1D HR curves per spline term */}
+      {curves.map((c, idx) => (
+        <div key={c.column} className="space-y-1">
+          <div className="text-xs font-semibold text-gray-700">{c.column} — HR vs reference (other covariates at mean)</div>
+          <Plot
+            data={[
+              { x: c.x, y: c.upper, type: "scatter", mode: "lines", line: { width: 0 }, hoverinfo: "skip", showlegend: false },
+              { x: c.x, y: c.lower, type: "scatter", mode: "lines", line: { width: 0 }, fill: "tonexty", fillcolor: "rgba(99,102,241,0.15)", hoverinfo: "skip", showlegend: false },
+              { x: c.x, y: c.hr, type: "scatter", mode: "lines", line: { color: "#4f46e5", width: 2 }, name: "HR", hovertemplate: `${c.column}=%{x:.2f}<br>HR=%{y:.2f}<extra></extra>` },
+              { x: c.knots, y: c.knots.map(() => 1), type: "scatter", mode: "markers", marker: { color: "#4f46e5", size: 8, symbol: "circle" }, name: "knots", hoverinfo: "x" },
+            ]}
+            layout={{
+              height: 280,
+              margin: { l: 50, r: 20, t: 10, b: 40 },
+              xaxis: { title: { text: c.column } },
+              yaxis: { title: { text: "Hazard Ratio" }, type: "log" as const },
+              shapes: [{ type: "line", x0: c.ref, x1: c.ref, y0: 0.01, y1: 100, yref: "y", line: { dash: "dot", color: "#9ca3af" } }],
+              showlegend: false,
+            }}
+            config={{ displaylogo: false, responsive: true }}
+            style={{ width: "100%" }}
+            useResizeHandler
+            key={`crx-curve-${idx}`}
+          />
+          <div className="text-[10px] text-gray-500">Reference = {c.ref}. Knots at: {c.knots.join(", ")}.</div>
+        </div>
+      ))}
+
+      {/* 2D HR contour for interaction */}
+      {surface && (
+        <div className="space-y-1">
+          <div className="text-xs font-semibold text-gray-700">
+            HR contour: {surface.x_col} × {surface.y_col} (other covariates at mean)
+          </div>
+          <Plot
+            data={[
+              {
+                z: surface.hr,
+                x: surface.x,
+                y: surface.y,
+                type: "contour",
+                colorscale: "RdBu",
+                reversescale: true,
+                contours: { coloring: "heatmap", showlabels: true },
+                colorbar: { title: { text: "HR" } as any },
+                hovertemplate: `${surface.x_col}=%{x:.2f}<br>${surface.y_col}=%{y:.2f}<br>HR=%{z:.2f}<extra></extra>`,
+              } as any,
+            ]}
+            layout={{
+              height: 380,
+              margin: { l: 60, r: 30, t: 10, b: 50 },
+              xaxis: { title: { text: surface.x_col } },
+              yaxis: { title: { text: surface.y_col } },
+            }}
+            config={{ displaylogo: false, responsive: true }}
+            style={{ width: "100%" }}
+            useResizeHandler
+          />
+          <div className="text-[10px] text-gray-500">
+            Reference: {surface.x_col}={surface.ref[surface.x_col]}, {surface.y_col}={surface.ref[surface.y_col]}.
+          </div>
+        </div>
+      )}
+
+      {/* Coefficients table */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs border-collapse">
+          <thead>
+            <tr className="bg-gray-50 border-b border-gray-200 text-gray-600">
+              <th className="text-left px-2 py-1">Term</th>
+              <th className="text-right px-2 py-1">β</th>
+              <th className="text-right px-2 py-1">HR</th>
+              <th className="text-right px-2 py-1">95% CI</th>
+              <th className="text-right px-2 py-1">SE</th>
+              <th className="text-right px-2 py-1">z</th>
+              <th className="text-right px-2 py-1">p</th>
+            </tr>
+          </thead>
+          <tbody>
+            {coefs.map((c) => (
+              <tr key={c.name} className="border-b border-gray-100">
+                <td className="px-2 py-1 font-mono text-[10px] text-gray-700">{c.name}</td>
+                <td className="text-right px-2 py-1">{c.coef.toFixed(3)}</td>
+                <td className="text-right px-2 py-1">{c.hr.toFixed(3)}</td>
+                <td className="text-right px-2 py-1">{c.ci_low.toFixed(2)} – {c.ci_high.toFixed(2)}</td>
+                <td className="text-right px-2 py-1">{c.se.toFixed(3)}</td>
+                <td className="text-right px-2 py-1">{c.z?.toFixed(2) ?? "—"}</td>
+                <td className={`text-right px-2 py-1 ${c.p != null && c.p < 0.05 ? "font-bold text-indigo-600" : "text-gray-500"}`}>{fmtP(c.p)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ── Cox-RCS spline term card ────────────────────────────────────────────────
+interface SplineTermCardState {
+  column: string;
+  n_knots: number;
+  knot_positions: string;
+  ref_value: string;
+}
+
+function SplineTermCard({
+  label,
+  term,
+  onChange,
+  numCols,
+}: {
+  label: string;
+  term: SplineTermCardState;
+  onChange: (next: SplineTermCardState) => void;
+  numCols: string[];
+}) {
+  const patch = (p: Partial<SplineTermCardState>) => onChange({ ...term, ...p });
+  return (
+    <div className="border border-gray-200 rounded p-2 space-y-1.5 bg-gray-50">
+      <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">{label}</div>
+      <div>
+        <label className="text-[10px] text-gray-400 block">Column</label>
+        <select className="select w-full text-xs py-0.5" value={term.column}
+          onChange={(e) => patch({ column: e.target.value })}>
+          {numCols.map((c) => <option key={c}>{c}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className="text-[10px] text-gray-400 block">Knots</label>
+        <div className="flex gap-1">
+          {[3, 4, 5].map((k) => (
+            <button key={k} onClick={() => patch({ n_knots: k })}
+              className={`flex-1 py-0.5 text-[11px] rounded border transition-colors ${term.n_knots === k ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-300 text-gray-600 hover:bg-white"}`}>
+              {k}{k === 4 ? " ★" : ""}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <label className="text-[10px] text-gray-400 block">Custom knot positions (blank = Harrell percentiles)</label>
+        <input type="text" placeholder={`e.g. 70, 100, 130, 160 (${term.n_knots} values)`}
+          value={term.knot_positions}
+          onChange={(e) => patch({ knot_positions: e.target.value })}
+          className="select w-full text-[11px] py-0.5" />
+      </div>
+      <div>
+        <label className="text-[10px] text-gray-400 block">Reference value (blank = median)</label>
+        <input type="number" placeholder="(median)"
+          value={term.ref_value}
+          onChange={(e) => patch({ ref_value: e.target.value })}
+          className="select w-full text-[11px] py-0.5" />
+      </div>
+    </div>
+  );
+}
+
 function adjustP(p: number, beta: number, nullHyp: string): number {
   if (nullHyp === "leq") return beta > 0 ? Math.min(p / 2, 1) : Math.min(1 - p / 2, 1);
   if (nullHyp === "geq") return beta < 0 ? Math.min(p / 2, 1) : Math.min(1 - p / 2, 1);
@@ -1245,6 +1452,22 @@ export default function ModelsPanel() {
   const [rcsCovariates, setRcsCovariates] = useState<string[]>([]);
   const [rcsLogScale,   setRcsLogScale]   = useState(true);
   const [rcsShowData,   setRcsShowData]   = useState(true);
+  // Univariate RCS extras (Cox outcome + custom knot positions)
+  const [rcsOutcomeType, setRcsOutcomeType] = useState<"logistic" | "linear" | "cox">("logistic");
+  const [rcsCoxDuration, setRcsCoxDuration] = useState(numCols[0] ?? "");
+  const [rcsCoxEvent,    setRcsCoxEvent]    = useState(numCols[1] ?? "");
+  const [rcsKnotMode,    setRcsKnotMode]    = useState<"harrell" | "custom">("harrell");
+  const [rcsCustomKnots, setRcsCustomKnots] = useState("");  // comma-separated
+
+  // ── Cox-RCS (multivariable) state ────────────────────────────────────────
+  type SplineTermState = { column: string; n_knots: number; knot_positions: string; ref_value: string };
+  const [crxDuration,   setCrxDuration]   = useState(numCols[0] ?? "");
+  const [crxEvent,      setCrxEvent]      = useState(numCols[1] ?? "");
+  const [crxTerm1, setCrxTerm1] = useState<SplineTermState>({ column: numCols[0] ?? "", n_knots: 4, knot_positions: "", ref_value: "" });
+  const [crxTerm2, setCrxTerm2] = useState<SplineTermState>({ column: numCols[1] ?? "", n_knots: 4, knot_positions: "", ref_value: "" });
+  const [crxUseTerm2,     setCrxUseTerm2]     = useState(false);
+  const [crxInteraction,  setCrxInteraction]  = useState(false);
+  const [crxCovariates,   setCrxCovariates]   = useState<string[]>([]);
   const [scaleFactors, setScaleFactors] = useState<Record<string, string>>({}); // col → divisor string
   const [selection, setSelection] = useState("p10"); // multivariate variable selection strategy
   const [durationCol, setDurationCol] = useState(numCols[0] ?? "");
@@ -1317,15 +1540,55 @@ export default function ModelsPanel() {
       else if (model === "ortable") res = await runLogisticTable({ session_id: sid, outcome, predictors, scale_factors: sf, selection, imputation });
       else if (model === "poisson") res = await runPoisson({ session_id: sid, outcome, predictors, imputation, robust_se: robustSE });
       else if (model === "km") res = await runKM({ session_id: sid, duration_col: durationCol, event_col: eventCol, group_col: groupCol || undefined, imputation });
-      else if (model === "rcs") res = await runRCS({
-        session_id: sid,
-        predictor:  rcsPredictor,
-        outcome:    rcsOutcome,
-        covariates: rcsCovariates,
-        n_knots:    rcsNKnots,
-        ref_value:  rcsRefValue !== "" ? parseFloat(rcsRefValue) : undefined,
-        model_type: "logistic",
-      });
+      else if (model === "rcs") {
+        const customKnotsArr = rcsKnotMode === "custom"
+          ? rcsCustomKnots.split(/[,\s]+/).filter(Boolean).map(Number).filter((n) => !Number.isNaN(n))
+          : undefined;
+        if (rcsKnotMode === "custom" && customKnotsArr && customKnotsArr.length !== rcsNKnots) {
+          throw new Error(`Custom knots: provide exactly ${rcsNKnots} numeric values (got ${customKnotsArr?.length ?? 0}).`);
+        }
+        const payload: Record<string, unknown> = {
+          session_id: sid,
+          predictor:  rcsPredictor,
+          covariates: rcsCovariates,
+          n_knots:    rcsNKnots,
+          ref_value:  rcsRefValue !== "" ? parseFloat(rcsRefValue) : undefined,
+          model_type: rcsOutcomeType,
+          knot_positions: customKnotsArr,
+        };
+        if (rcsOutcomeType === "cox") {
+          payload.duration_col = rcsCoxDuration;
+          payload.event_col    = rcsCoxEvent;
+        } else {
+          payload.outcome = rcsOutcome;
+        }
+        res = await runRCS(payload);
+      }
+      else if (model === "cox_rcs") {
+        const buildTerm = (t: SplineTermState) => {
+          const kp = t.knot_positions.split(/[,\s]+/).filter(Boolean).map(Number).filter((n) => !Number.isNaN(n));
+          if (kp.length > 0 && kp.length !== t.n_knots) {
+            throw new Error(`Custom knots for '${t.column}': provide exactly ${t.n_knots} numeric values (got ${kp.length}).`);
+          }
+          return {
+            column: t.column,
+            n_knots: t.n_knots,
+            knot_positions: kp.length > 0 ? kp : undefined,
+            ref_value: t.ref_value !== "" ? parseFloat(t.ref_value) : undefined,
+          };
+        };
+        const terms = [buildTerm(crxTerm1)];
+        if (crxUseTerm2) terms.push(buildTerm(crxTerm2));
+        res = await runCoxRCS({
+          session_id: sid,
+          duration_col: crxDuration,
+          event_col:    crxEvent,
+          spline_terms: terms,
+          covariates:   crxCovariates,
+          include_interaction: crxInteraction && terms.length === 2,
+          imputation,
+        });
+      }
       else res = await runCox({ session_id: sid, duration_col: durationCol, event_col: eventCol, predictors, imputation });
       setResult(res.data);
     } catch (e: any) {
@@ -1362,6 +1625,7 @@ export default function ModelsPanel() {
   const isSurvival  = false;  // KM/Cox moved to Survival Advanced tab
   const isORTable   = model === "ortable";
   const isRCS       = model === "rcs";
+  const isCoxRCS    = model === "cox_rcs";
   const hasRobustSE = model === "linear" || model === "logistic" || model === "poisson";
 
   return (
@@ -1374,7 +1638,8 @@ export default function ModelsPanel() {
             ["logistic", "Logistic Regression",      "Predict a binary outcome (0/1, yes/no) — outputs Odds Ratios showing how each predictor changes the odds of the event."],
             ["ortable",  "OR Table (Uni + Multi)",   "Run univariate logistic regression for each predictor separately, then all significant ones together in a multivariate model. Standard for clinical papers."],
             ["poisson",  "Poisson Regression",       "Count outcome model (e.g. number of events). Outputs Incidence Rate Ratios (IRR = eβ). Use when the outcome is a non-negative integer (event counts, re-admissions, etc.)."],
-            ["rcs",      "RCS Dose-Response",        "Restricted Cubic Splines — models non-linear (U/J-shaped) relationships between a continuous predictor and a binary outcome. Outputs a publication-ready dose-response curve with 95% CI."],
+            ["rcs",      "RCS Dose-Response",        "Restricted Cubic Splines — models non-linear (U/J-shaped) relationships between a continuous predictor and a binary OR time-to-event outcome. Outputs a publication-ready dose-response curve with 95% CI. Supports custom knot positions."],
+            ["cox_rcs",  "Cox-RCS (multivariable)",  "Multivariable Cox proportional hazards with 1 or 2 RCS terms, additive covariates, and an optional RCS × RCS interaction test (LR test). For survival analyses like 'Surv(time,event) ~ rcs(LDL,4) * rcs(AGE,4) + SEX + DM + HT + SMOKER'."],
           ] as const).map(([v, l, desc]) => (
             <label key={v} className="flex items-start gap-2 cursor-pointer group">
               <input type="radio" name="model" value={v} checked={model === v} onChange={() => { setModel(v); setResult(null); setSelectedCoefIdx(null); }} className="accent-indigo-500 mt-0.5" />
@@ -1405,11 +1670,43 @@ export default function ModelsPanel() {
                 </select>
               </div>
               <div>
-                <label className="text-xs text-gray-400 block mb-1">Outcome (binary 0/1)</label>
-                <select className="select w-full" value={rcsOutcome} onChange={(e) => setRcsOutcome(e.target.value)}>
-                  {allCols.map((c) => <option key={c}>{c}</option>)}
-                </select>
+                <label className="text-xs text-gray-400 block mb-1">
+                  Outcome type <Tip text="Logistic: binary 0/1 outcome → OR. Linear: continuous outcome → mean difference. Cox: time-to-event with duration + event columns → HR." wide />
+                </label>
+                <div className="flex gap-1">
+                  {(["logistic", "linear", "cox"] as const).map((t) => (
+                    <button key={t} onClick={() => setRcsOutcomeType(t)}
+                      className={`flex-1 py-1 text-[11px] rounded border transition-colors ${rcsOutcomeType === t ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}>
+                      {t === "cox" ? "Cox" : t === "logistic" ? "Logistic" : "Linear"}
+                    </button>
+                  ))}
+                </div>
               </div>
+              {rcsOutcomeType === "cox" ? (
+                <>
+                  <div>
+                    <label className="text-xs text-gray-400 block mb-1">Duration column</label>
+                    <select className="select w-full" value={rcsCoxDuration} onChange={(e) => setRcsCoxDuration(e.target.value)}>
+                      {numCols.map((c) => <option key={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-400 block mb-1">Event column (0/1)</label>
+                    <select className="select w-full" value={rcsCoxEvent} onChange={(e) => setRcsCoxEvent(e.target.value)}>
+                      {numCols.map((c) => <option key={c}>{c}</option>)}
+                    </select>
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <label className="text-xs text-gray-400 block mb-1">
+                    Outcome {rcsOutcomeType === "logistic" ? "(binary 0/1)" : "(continuous)"}
+                  </label>
+                  <select className="select w-full" value={rcsOutcome} onChange={(e) => setRcsOutcome(e.target.value)}>
+                    {allCols.map((c) => <option key={c}>{c}</option>)}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="text-xs text-gray-400 block mb-1">
                   Knots <Tip text="3 knots → [10th, 50th, 90th] percentiles. 4 knots (clinical standard) → [5th, 35th, 65th, 95th]. 5 knots → [5th, 27.5th, 50th, 72.5th, 95th]." wide />
@@ -1425,7 +1722,25 @@ export default function ModelsPanel() {
               </div>
               <div>
                 <label className="text-xs text-gray-400 block mb-1">
-                  Reference value <Tip text="The OR = 1.0 reference point on the X-axis. Leave blank to use the median." />
+                  Knot positions <Tip text="Harrell percentiles are the standard reference method. Custom positions are useful for clinically meaningful cut-points (e.g. LDL 70, 100, 130, 160 mg/dL) — typically reported as a sensitivity analysis." wide />
+                </label>
+                <div className="flex gap-1 mb-1">
+                  {(["harrell", "custom"] as const).map((m) => (
+                    <button key={m} onClick={() => setRcsKnotMode(m)}
+                      className={`flex-1 py-1 text-[11px] rounded border transition-colors ${rcsKnotMode === m ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}>
+                      {m === "harrell" ? "Harrell percentiles" : "Custom"}
+                    </button>
+                  ))}
+                </div>
+                {rcsKnotMode === "custom" && (
+                  <input type="text" placeholder={`e.g. 70, 100, 130, 160 (${rcsNKnots} values)`}
+                    value={rcsCustomKnots} onChange={(e) => setRcsCustomKnots(e.target.value)}
+                    className="select w-full text-xs py-1" />
+                )}
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">
+                  Reference value <Tip text="The effect = 1.0 (or 0 for linear) reference point on the X-axis. Leave blank to use the median." />
                 </label>
                 <input type="number" placeholder="(median)" value={rcsRefValue}
                   onChange={(e) => setRcsRefValue(e.target.value)}
@@ -1434,10 +1749,67 @@ export default function ModelsPanel() {
               <div>
                 <label className="text-xs text-gray-400 block mb-1">Covariates (optional)</label>
                 <div className="max-h-32 overflow-y-auto space-y-1">
-                  {numCols.filter((c) => c !== rcsPredictor && c !== rcsOutcome).map((c) => (
+                  {numCols.filter((c) => c !== rcsPredictor && c !== rcsOutcome && c !== rcsCoxDuration && c !== rcsCoxEvent).map((c) => (
                     <label key={c} className="flex items-center gap-2 text-xs cursor-pointer">
                       <input type="checkbox" checked={rcsCovariates.includes(c)}
                         onChange={() => setRcsCovariates((prev) => prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c])}
+                        className="accent-indigo-500" />
+                      <span className="text-gray-700 truncate">{c}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </>
+          ) : isCoxRCS ? (
+            <>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Duration column</label>
+                <select className="select w-full" value={crxDuration} onChange={(e) => setCrxDuration(e.target.value)}>
+                  {numCols.map((c) => <option key={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Event column (0/1)</label>
+                <select className="select w-full" value={crxEvent} onChange={(e) => setCrxEvent(e.target.value)}>
+                  {numCols.map((c) => <option key={c}>{c}</option>)}
+                </select>
+              </div>
+              <SplineTermCard label="Spline term 1" term={crxTerm1} onChange={setCrxTerm1} numCols={numCols} />
+              {crxUseTerm2 ? (
+                <>
+                  <SplineTermCard label="Spline term 2" term={crxTerm2} onChange={setCrxTerm2} numCols={numCols} />
+                  <button
+                    onClick={() => { setCrxUseTerm2(false); setCrxInteraction(false); }}
+                    className="w-full text-[11px] py-1 rounded border border-gray-300 text-gray-500 hover:bg-red-50 hover:text-red-600 hover:border-red-300 transition-colors"
+                  >
+                    Remove second spline term
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => setCrxUseTerm2(true)}
+                  className="w-full text-[11px] py-1 rounded border border-dashed border-indigo-300 text-indigo-600 hover:bg-indigo-50 transition-colors"
+                >
+                  + Add second spline term (rcs × rcs)
+                </button>
+              )}
+              {crxUseTerm2 && (
+                <label className="flex items-start gap-2 cursor-pointer p-2 bg-amber-50 border border-amber-200 rounded">
+                  <input type="checkbox" className="accent-amber-600 mt-0.5"
+                    checked={crxInteraction} onChange={(e) => setCrxInteraction(e.target.checked)} />
+                  <div className="text-xs leading-tight">
+                    <span className="font-semibold text-amber-900">Include RCS × RCS interaction</span>
+                    <span className="block text-[10px] text-amber-700">Tensor-product of basis columns. Adds an LR test (full vs main-effects-only) and an HR contour plot.</span>
+                  </div>
+                </label>
+              )}
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Linear covariates (optional)</label>
+                <div className="max-h-32 overflow-y-auto space-y-1">
+                  {allCols.filter((c) => c !== crxDuration && c !== crxEvent && c !== crxTerm1.column && (!crxUseTerm2 || c !== crxTerm2.column)).map((c) => (
+                    <label key={c} className="flex items-center gap-2 text-xs cursor-pointer">
+                      <input type="checkbox" checked={crxCovariates.includes(c)}
+                        onChange={() => setCrxCovariates((prev) => prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c])}
                         className="accent-indigo-500" />
                       <span className="text-gray-700 truncate">{c}</span>
                     </label>
@@ -1594,8 +1966,8 @@ export default function ModelsPanel() {
             imputation={imputation}
             onImputation={setImputation}
           >
-            <button className="btn-primary w-full" onClick={run} disabled={loading || (!isSurvival && !isRCS && predictors.length === 0) || (isORTable && predictors.length < 1)}>
-              {loading ? "Fitting…" : isRCS ? "Fit RCS Model" : "Fit Model"}
+            <button className="btn-primary w-full" onClick={run} disabled={loading || (!isSurvival && !isRCS && !isCoxRCS && predictors.length === 0) || (isORTable && predictors.length < 1)}>
+              {loading ? "Fitting…" : isCoxRCS ? "Fit Cox-RCS Model" : isRCS ? "Fit RCS Model" : "Fit Model"}
             </button>
           </MissingGuard>
           {error && <p className="text-red-400 text-xs">{error}</p>}
@@ -1619,7 +1991,9 @@ export default function ModelsPanel() {
           </div>
         )}
 
-        {result && isRCS ? (
+        {result && isCoxRCS ? (
+          <CoxRCSResultPanel result={result} />
+        ) : result && isRCS ? (
           /* ── RCS dose-response result ─────────────────────────────────────── */
           <div className="panel space-y-3">
             {/* Header row */}
