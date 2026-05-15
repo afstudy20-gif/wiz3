@@ -1525,6 +1525,7 @@ export default function ModelsPanel() {
   const [rcsNKnots,    setRcsNKnots]    = useState(4);
   const [rcsRefValue,  setRcsRefValue]  = useState("");
   const [rcsCovariates, setRcsCovariates] = useState<string[]>([]);
+  const [rcsInteractionCov, setRcsInteractionCov] = useState<string[]>([]);
   const [rcsLogScale,   setRcsLogScale]   = useState(true);
   const [rcsShowData,   setRcsShowData]   = useState(true);
   // Univariate RCS extras (Cox outcome + custom knot positions)
@@ -1630,6 +1631,9 @@ export default function ModelsPanel() {
           ref_value:  rcsRefValue !== "" ? parseFloat(rcsRefValue) : undefined,
           model_type: rcsOutcomeType,
           knot_positions: customKnotsArr,
+          interaction_covariates: rcsInteractionCov.length > 0
+            ? rcsInteractionCov.filter((c) => rcsCovariates.includes(c))
+            : undefined,
         };
         if (rcsOutcomeType === "cox") {
           payload.duration_col = rcsCoxDuration;
@@ -1835,7 +1839,7 @@ export default function ModelsPanel() {
               <div>
                 <label className="text-xs text-gray-400 block mb-1">
                   Covariates (optional)
-                  <Tip wide text="Numeric covariates enter as linear adjustment terms. Categorical / text covariates are dummy-coded on the server (drop_first=True) — pick e.g. SEX, DM, HT directly." />
+                  <Tip wide text="Numeric covariates enter as linear adjustment terms. Categorical / text covariates are dummy-coded on the server (drop_first=True) — pick e.g. SEX, DM, HT directly. Tick the small × box on the right of a covariate to ALSO interact it with the spline, i.e. test whether the dose-response shape differs across its levels (e.g. does the LDL curve differ by SEX?). An LR test will appear in the result card." />
                 </label>
                 <div className="max-h-32 overflow-y-auto space-y-1">
                   {allCols
@@ -1843,15 +1847,38 @@ export default function ModelsPanel() {
                     .map((c) => {
                       const kind = session.columns.find((col) => col.name === c)?.kind ?? "numeric";
                       const isNum = kind === "numeric";
+                      const isSelected = rcsCovariates.includes(c);
+                      const isInteracting = rcsInteractionCov.includes(c);
                       return (
-                        <label key={c} className="flex items-center gap-2 text-xs cursor-pointer">
-                          <input type="checkbox" checked={rcsCovariates.includes(c)}
-                            onChange={() => setRcsCovariates((prev) => prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c])}
+                        <label key={c} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                          <input type="checkbox" checked={isSelected}
+                            onChange={() => setRcsCovariates((prev) => {
+                              const next = prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c];
+                              // If user deselects the covariate, also remove its interaction flag.
+                              if (!next.includes(c)) setRcsInteractionCov((p) => p.filter((x) => x !== c));
+                              return next;
+                            })}
                             className="accent-indigo-500" />
                           <span className="text-gray-700 truncate flex-1">{c}</span>
                           <span className={`text-[9px] px-1 rounded ${isNum ? "bg-blue-50 text-blue-600" : "bg-purple-50 text-purple-600"}`}>
                             {isNum ? "N" : "C"}
                           </span>
+                          <label className={`flex items-center gap-0.5 text-[9px] px-1 rounded border cursor-pointer transition-colors
+                            ${!isSelected ? "border-gray-200 text-gray-300 cursor-not-allowed"
+                              : isInteracting ? "border-amber-300 bg-amber-50 text-amber-700"
+                              : "border-gray-300 text-gray-500 hover:border-amber-300 hover:text-amber-600"}`}
+                            title={isSelected
+                              ? "Add a spline × this covariate interaction (LR test in result)"
+                              : "Tick the covariate first to enable interaction"}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <input type="checkbox"
+                              disabled={!isSelected}
+                              checked={isInteracting}
+                              onChange={() => setRcsInteractionCov((prev) => prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c])}
+                              className="accent-amber-500 w-2.5 h-2.5" />
+                            ×spl
+                          </label>
                         </label>
                       );
                     })}
@@ -2179,6 +2206,24 @@ export default function ModelsPanel() {
               <p className="text-[10px] text-amber-600">
                 {result.n_excluded} of {result.n_total} rows excluded due to missing values in predictor / outcome / covariates.
               </p>
+            )}
+
+            {/* Spline × covariate interaction LR test */}
+            {result.interaction && !result.interaction.error && (
+              <div className={`text-xs p-2 rounded border ${result.interaction.p != null && result.interaction.p < 0.05 ? "bg-amber-50 text-amber-900 border-amber-200" : "bg-gray-50 text-gray-700 border-gray-200"}`}>
+                <span className="font-semibold uppercase tracking-wider text-[10px] block mb-0.5">
+                  Spline × {Array.isArray(result.interaction.covariates) ? result.interaction.covariates.join(" + ") : "covariate"} interaction (LR test)
+                </span>
+                χ²({result.interaction.df}) = {result.interaction.lr_stat?.toFixed(2)}, p = {result.interaction.p != null ? (result.interaction.p < 0.001 ? "<0.001" : result.interaction.p.toFixed(3)) : "—"}
+                <span className="block text-[10px] text-gray-500 mt-0.5">
+                  {result.interaction.p != null && result.interaction.p < 0.05
+                    ? "The dose-response shape differs across levels — consider reporting stratified curves."
+                    : "No evidence the dose-response shape differs across covariate levels."}
+                </span>
+              </div>
+            )}
+            {result.interaction?.error && (
+              <p className="text-xs text-red-500">Interaction test failed: {result.interaction.error}</p>
             )}
 
             {/* Dose-response plot */}

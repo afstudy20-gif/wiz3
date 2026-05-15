@@ -967,6 +967,12 @@ class RCSRequest(BaseModel):
     event_col: Optional[str] = None
     # Optional override for Harrell percentile knots
     knot_positions: Optional[List[float]] = None
+    # Covariates to interact with the spline (must also be in `covariates`).
+    # For each named covariate (dummy-encoded if categorical) we add
+    # (n_knots − 1) × (#dummies) interaction columns multiplying the spline
+    # basis. We then refit a reduced model without those columns and report
+    # an LR test as the spline × covariate interaction p-value.
+    interaction_covariates: Optional[List[str]] = None
 
 
 @router.post("/rcs")
@@ -1075,6 +1081,44 @@ def rcs_regression(req: RCSRequest):
         cov_names = []
         cov_mat = None
 
+    # ── Spline × covariate interaction columns ────────────────────────────
+    # Each interaction covariate multiplies BOTH the linear x term and every
+    # spline basis column, so the spline shape is allowed to differ across
+    # levels (numeric × spline = single set; categorical × spline = one set
+    # per surviving dummy).
+    interaction_cov_names: list[str] = []
+    interaction_extra_names: list[str] = []  # names of the added columns
+    interaction_extra: list[np.ndarray] = []  # the actual column arrays
+    interaction_extra_meta: list[tuple[str, int]] = []  # (member_col, spline_part_idx) for X_syn rebuild
+    if req.interaction_covariates:
+        # Validate: every requested interaction covariate must appear in the
+        # encoded covariate slice (either directly when numeric, or via a
+        # dummy prefix when categorical).
+        def _resolve_cov(name: str) -> list[str]:
+            if name in cov_names:
+                return [name]
+            prefix = f"{name}_"
+            return [c for c in cov_names if c.startswith(prefix)]
+
+        spline_design = np.column_stack([x_raw, spline_cols])  # (n, k-1)
+        spline_part_names = ["lin"] + [f"sp{i+1}" for i in range(spline_cols.shape[1])]
+        for cov in req.interaction_covariates:
+            members = _resolve_cov(cov)
+            if not members:
+                raise HTTPException(status_code=422, detail=f"interaction_covariates entry '{cov}' is not in the selected covariates list.")
+            interaction_cov_names.append(cov)
+            for m in members:
+                cov_vec = df[m].values.astype(float)
+                for i in range(spline_design.shape[1]):
+                    interaction_extra.append(spline_design[:, i] * cov_vec)
+                    interaction_extra_names.append(f"{m}:{req.predictor}_{spline_part_names[i]}")
+                    interaction_extra_meta.append((m, i))
+
+    if interaction_extra:
+        interaction_mat = np.column_stack(interaction_extra)
+    else:
+        interaction_mat = None
+
     # ── Fit model ────────────────────────────────────────────────────────────
     try:
         if is_cox:
@@ -1087,12 +1131,14 @@ def rcs_regression(req: RCSRequest):
             )
             for c in cov_names:
                 fit_df[c] = df[c].values
+            for i, ix_name in enumerate(interaction_extra_names):
+                fit_df[ix_name] = interaction_extra[i]
             fit_df["_dur_"] = duration
             fit_df["_evt_"] = event
             cph = CoxPHFitter()
             cph.fit(fit_df, duration_col="_dur_", event_col="_evt_")
             # Aligned column ordering for the design matrix
-            design_cols = feat_cols + cov_names
+            design_cols = feat_cols + cov_names + interaction_extra_names
             params = cph.params_.reindex(design_cols).values
             cov_params = cph.variance_matrix_.reindex(index=design_cols, columns=design_cols).values
             aic_val = None  # lifelines exposes AIC_partial_ in newer versions
@@ -1106,10 +1152,12 @@ def rcs_regression(req: RCSRequest):
             concordance = float(cph.concordance_index_)
             n_events = int(np.sum(event))
         else:
-            # Logistic / linear: intercept + x + spline + covariates
+            # Logistic / linear: intercept + x + spline + covariates + interactions
             X_parts = [np.ones(n), x_raw, spline_cols]
             if cov_mat is not None:
                 X_parts.append(cov_mat)
+            if interaction_mat is not None:
+                X_parts.append(interaction_mat)
             X = np.column_stack(X_parts)
             if model_type == "logistic":
                 result = sm.Logit(y, X).fit(disp=0, maxiter=200)
@@ -1131,24 +1179,78 @@ def rcs_regression(req: RCSRequest):
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Model fitting error: {exc}")
 
+    # ── Interaction LR test ────────────────────────────────────────────────
+    # Refit a reduced model that omits the spline × covariate interaction
+    # columns and compute 2*(logL_full − logL_reduced) ~ χ²(#interaction_cols).
+    interaction_result = None
+    if interaction_extra_names:
+        try:
+            if is_cox:
+                reduced_df = fit_df.drop(columns=interaction_extra_names)
+                cph_red = CoxPHFitter()
+                cph_red.fit(reduced_df, duration_col="_dur_", event_col="_evt_")
+                ll_red = float(cph_red.log_likelihood_)
+                ll_full = float(log_lik)
+            else:
+                X_red_parts = [np.ones(n), x_raw, spline_cols]
+                if cov_mat is not None:
+                    X_red_parts.append(cov_mat)
+                X_red = np.column_stack(X_red_parts)
+                if model_type == "logistic":
+                    res_red = sm.Logit(y, X_red).fit(disp=0, maxiter=200)
+                else:
+                    res_red = sm.OLS(y, X_red).fit()
+                ll_red = float(getattr(res_red, "llf", np.nan))
+                ll_full = float(log_lik) if log_lik is not None else float(getattr(result, "llf", np.nan))
+            lr_stat = 2.0 * (ll_full - ll_red)
+            from scipy.stats import chi2 as _chi2
+            df_lr = len(interaction_extra_names)
+            p_lr = float(_chi2.sf(lr_stat, df=df_lr))
+            interaction_result = {
+                "covariates": interaction_cov_names,
+                "lr_stat": round(lr_stat, 4),
+                "df": df_lr,
+                "p": round(p_lr, 6),
+                "log_lik_full": round(ll_full, 4),
+                "log_lik_reduced": round(ll_red, 4),
+            }
+        except Exception as exc:
+            interaction_result = {"covariates": interaction_cov_names, "error": str(exc)}
+
     # ── Dose-response curve ─────────────────────────────────────────────────
     x_lo, x_hi = float(np.percentile(x_raw, 1)), float(np.percentile(x_raw, 99))
     x_syn = np.linspace(x_lo, x_hi, 200)
     sp_syn = _rcs_basis(x_syn, knots)
 
+    # Lookup mean of each encoded covariate column so we can recreate the
+    # interaction synthetic columns at the same anchor.
+    cov_means_by_name: dict[str, float] = {}
+    if cov_names:
+        cov_means = cov_mat.mean(axis=0)
+        for cn, mean_val in zip(cov_names, cov_means):
+            cov_means_by_name[cn] = float(mean_val)
+
+    spline_design_syn = np.column_stack([x_syn, sp_syn])  # (200, k-1)
+
     if is_cox:
         # Cox design has NO intercept (baseline hazard absorbs it)
         if cov_mat is not None:
-            cov_means = cov_mat.mean(axis=0)
             X_syn = np.column_stack([x_syn, sp_syn, np.tile(cov_means, (200, 1))])
         else:
             X_syn = np.column_stack([x_syn, sp_syn])
     else:
         if cov_mat is not None:
-            cov_means = cov_mat.mean(axis=0)
             X_syn = np.column_stack([np.ones(200), x_syn, sp_syn, np.tile(cov_means, (200, 1))])
         else:
             X_syn = np.column_stack([np.ones(200), x_syn, sp_syn])
+
+    # Append synthetic interaction columns: each = spline_part(x_syn) × mean(covariate dummy)
+    if interaction_extra_meta:
+        ix_syn = np.column_stack([
+            spline_design_syn[:, spi] * cov_means_by_name.get(member, 0.0)
+            for (member, spi) in interaction_extra_meta
+        ])
+        X_syn = np.column_stack([X_syn, ix_syn])
 
     lp_syn = X_syn @ params
 
@@ -1227,6 +1329,8 @@ def rcs_regression(req: RCSRequest):
         "covariates_requested": list(req.covariates or []),
         "covariates_used":      cov_names,
         "covariates_summary":   cov_summary,
+        "interaction":          interaction_result,
+        "interaction_terms":    interaction_extra_names,
         "x_values":       _clean(x_syn),
         "or_values":      _clean(or_vals),   # kept for backward compat; really effect_type values
         "ci_low":         _clean(ci_low),
