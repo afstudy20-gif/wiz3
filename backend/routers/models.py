@@ -936,12 +936,49 @@ def rcs_regression(req: RCSRequest):
         raise HTTPException(status_code=400, detail=f"Columns not found in session: {missing_cols}")
 
     df = df_full[cols_needed].copy()
-    for c in cols_needed:
+    n_total = len(df)
+
+    # Numeric coerce: only required columns (predictor, outcome / duration+event).
+    # Covariates are coerced separately below so categorical columns survive.
+    required_numeric = [req.predictor]
+    if is_cox:
+        required_numeric += [req.duration_col, req.event_col]
+    else:
+        required_numeric += [req.outcome]
+    for c in required_numeric:
         df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    # Encode covariates: numeric stays numeric (coerce), categorical → dummies
+    # (drop_first=True). The encoded design slice lives in cov_df.
+    cov_df = None
+    if req.covariates:
+        cov_raw = df[req.covariates].copy()
+        numeric_cov: list[str] = []
+        cat_cov: list[str] = []
+        for c in req.covariates:
+            col = cov_raw[c]
+            # Treat as numeric if dtype is numeric AND coerces cleanly for ≥80%
+            # of rows; otherwise treat as categorical.
+            if pd.api.types.is_numeric_dtype(col):
+                numeric_cov.append(c)
+            else:
+                coerced = pd.to_numeric(col, errors="coerce")
+                if coerced.notna().mean() >= 0.8 and len(coerced.dropna().unique()) > 2:
+                    cov_raw[c] = coerced
+                    numeric_cov.append(c)
+                else:
+                    cat_cov.append(c)
+        # Numeric covariate slice
+        num_part = cov_raw[numeric_cov].apply(pd.to_numeric, errors="coerce") if numeric_cov else pd.DataFrame(index=cov_raw.index)
+        # Categorical covariate slice → dummies (drop_first=True for identifiability)
+        cat_part = pd.get_dummies(cov_raw[cat_cov], drop_first=True, dummy_na=False) if cat_cov else pd.DataFrame(index=cov_raw.index)
+        cov_df = pd.concat([num_part, cat_part], axis=1).astype(float)
+        # Re-assign cov_df back onto df.index then drop NAs across the joined frame
+        df = pd.concat([df.drop(columns=req.covariates), cov_df], axis=1)
     df = df.dropna()
     n = len(df)
     if n < 10:
-        raise HTTPException(status_code=400, detail="Not enough complete rows (need ≥ 10).")
+        raise HTTPException(status_code=400, detail=f"Not enough complete rows (need ≥ 10). Got {n} after dropping rows with missing predictor / outcome / covariates (total available: {n_total}).")
 
     x_raw = df[req.predictor].values.astype(float)
 
@@ -971,7 +1008,13 @@ def rcs_regression(req: RCSRequest):
         raise HTTPException(status_code=422, detail=str(exc))
 
     spline_cols = _rcs_basis(x_raw, knots)
-    cov_mat = df[req.covariates].values.astype(float) if req.covariates else None
+    # Final covariate design slice — column order matches cov_df.columns
+    if cov_df is not None and cov_df.shape[1] > 0:
+        cov_names = list(cov_df.columns)
+        cov_mat = df[cov_names].values.astype(float)
+    else:
+        cov_names = []
+        cov_mat = None
 
     # ── Fit model ────────────────────────────────────────────────────────────
     try:
@@ -983,14 +1026,14 @@ def rcs_regression(req: RCSRequest):
                 columns=feat_cols,
                 index=df.index,
             )
-            for c in (req.covariates or []):
+            for c in cov_names:
                 fit_df[c] = df[c].values
             fit_df["_dur_"] = duration
             fit_df["_evt_"] = event
             cph = CoxPHFitter()
             cph.fit(fit_df, duration_col="_dur_", event_col="_evt_")
             # Aligned column ordering for the design matrix
-            design_cols = feat_cols + list(req.covariates or [])
+            design_cols = feat_cols + cov_names
             params = cph.params_.reindex(design_cols).values
             cov_params = cph.variance_matrix_.reindex(index=design_cols, columns=design_cols).values
             aic_val = None  # lifelines exposes AIC_partial_ in newer versions
@@ -1088,6 +1131,22 @@ def rcs_regression(req: RCSRequest):
     #   logistic → OR, cox → HR, linear → mean-difference.
     effect_type = "HR" if is_cox else ("OR" if model_type == "logistic" else "mean_diff")
 
+    # Per-covariate coefficient summary so the frontend can show "adjusted for X, Y, Z"
+    # AND surface the actual hazard / odds ratios for the adjustment terms.
+    cov_summary = []
+    if cov_names:
+        n_pre_cov = (0 if is_cox else 2) + (1 + spline_cols.shape[1])  # intercept (if any) + linear + spline cols
+        for offset, name in enumerate(cov_names):
+            i = n_pre_cov + offset
+            beta = float(params[i]) if i < len(params) else None
+            se = float(np.sqrt(max(cov_params[i, i], 0.0))) if i < len(params) else None
+            cov_summary.append({
+                "name": name,
+                "coef": round(beta, 6) if beta is not None else None,
+                "effect": round(float(np.exp(beta)), 4) if (is_cox or model_type == "logistic") and beta is not None else (round(beta, 4) if beta is not None else None),
+                "se":   round(se, 6) if se is not None else None,
+            })
+
     return {
         "predictor":      req.predictor,
         "outcome":        req.outcome,
@@ -1096,6 +1155,8 @@ def rcs_regression(req: RCSRequest):
         "model_type":     model_type,
         "effect_type":    effect_type,
         "n":              n,
+        "n_total":        n_total,
+        "n_excluded":     n_total - n,
         "n_events":       n_events,
         "n_knots":        req.n_knots,
         "knots":          [round(float(kn), 2) for kn in knots],
@@ -1104,6 +1165,9 @@ def rcs_regression(req: RCSRequest):
         "aic":            _ns(aic_val),
         "log_likelihood": _ns(log_lik),
         "concordance":    _ns(concordance),
+        "covariates_requested": list(req.covariates or []),
+        "covariates_used":      cov_names,
+        "covariates_summary":   cov_summary,
         "x_values":       _clean(x_syn),
         "or_values":      _clean(or_vals),   # kept for backward compat; really effect_type values
         "ci_low":         _clean(ci_low),

@@ -1833,16 +1833,28 @@ export default function ModelsPanel() {
                   className="select w-full text-xs py-1" />
               </div>
               <div>
-                <label className="text-xs text-gray-400 block mb-1">Covariates (optional)</label>
+                <label className="text-xs text-gray-400 block mb-1">
+                  Covariates (optional)
+                  <Tip wide text="Numeric covariates enter as linear adjustment terms. Categorical / text covariates are dummy-coded on the server (drop_first=True) — pick e.g. SEX, DM, HT directly." />
+                </label>
                 <div className="max-h-32 overflow-y-auto space-y-1">
-                  {numCols.filter((c) => c !== rcsPredictor && c !== rcsOutcome && c !== rcsCoxDuration && c !== rcsCoxEvent).map((c) => (
-                    <label key={c} className="flex items-center gap-2 text-xs cursor-pointer">
-                      <input type="checkbox" checked={rcsCovariates.includes(c)}
-                        onChange={() => setRcsCovariates((prev) => prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c])}
-                        className="accent-indigo-500" />
-                      <span className="text-gray-700 truncate">{c}</span>
-                    </label>
-                  ))}
+                  {allCols
+                    .filter((c) => c !== rcsPredictor && c !== rcsOutcome && c !== rcsCoxDuration && c !== rcsCoxEvent)
+                    .map((c) => {
+                      const kind = session.columns.find((col) => col.name === c)?.kind ?? "numeric";
+                      const isNum = kind === "numeric";
+                      return (
+                        <label key={c} className="flex items-center gap-2 text-xs cursor-pointer">
+                          <input type="checkbox" checked={rcsCovariates.includes(c)}
+                            onChange={() => setRcsCovariates((prev) => prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c])}
+                            className="accent-indigo-500" />
+                          <span className="text-gray-700 truncate flex-1">{c}</span>
+                          <span className={`text-[9px] px-1 rounded ${isNum ? "bg-blue-50 text-blue-600" : "bg-purple-50 text-purple-600"}`}>
+                            {isNum ? "N" : "C"}
+                          </span>
+                        </label>
+                      );
+                    })}
                 </div>
               </div>
             </>
@@ -2141,6 +2153,33 @@ export default function ModelsPanel() {
               ))}
               <span className="text-gray-400 ml-2">reference = <strong>{result.ref_value}</strong> ({eff.abbr} = {eff.refValue.toFixed(1)})</span>
             </div>
+
+            {/* Adjusted-for chips + per-covariate effect ratios — proves the
+                model actually used the covariates the user ticked. */}
+            {Array.isArray(result.covariates_used) && result.covariates_used.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                <span className="text-gray-400">Adjusted for:</span>
+                {(result.covariates_summary as Array<{ name: string; effect: number | null; coef: number | null }> | undefined ?? []).map((cv) => (
+                  <span key={cv.name} className="bg-emerald-50 border border-emerald-100 text-emerald-700 rounded px-1.5 py-0.5"
+                    title={cv.coef != null ? `β = ${cv.coef}` : ""}>
+                    {cv.name}
+                    {cv.effect != null && <> · {eff.abbr} = {cv.effect.toFixed(3)}</>}
+                  </span>
+                ))}
+                {result.covariates_requested && result.covariates_requested.length !== result.covariates_used.length && (
+                  <span className="text-amber-600 text-[10px] ml-1">
+                    ({result.covariates_requested.length - result.covariates_used.length} dropped — categorical encoded as dummies)
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* Missing-data exclusion notice */}
+            {result.n_excluded != null && result.n_excluded > 0 && (
+              <p className="text-[10px] text-amber-600">
+                {result.n_excluded} of {result.n_total} rows excluded due to missing values in predictor / outcome / covariates.
+              </p>
+            )}
 
             {/* Dose-response plot */}
             <TitledPlot
