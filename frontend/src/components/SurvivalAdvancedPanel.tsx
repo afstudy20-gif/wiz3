@@ -5,6 +5,7 @@ import { runFineGray, runEValue, runLandmark, runKM, runCox } from "../api";
 import { usePlotLayout, usePalette, useTraceDefaults } from "../plotStyle";
 import ResultExporter from "./ResultExporter";
 import PlotExporter from "./PlotExporter";
+import { Tip } from "./Tip";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -734,7 +735,8 @@ export default function SurvivalAdvancedPanel() {
               }}
               className="px-3 py-1.5 text-xs font-medium border border-indigo-300 text-indigo-600 rounded-lg hover:bg-indigo-50 disabled:opacity-50 transition-colors"
             >
-              {coxScanLoading ? "Taranıyor…" : "🔍 Univariable Tarama"}
+              {coxScanLoading ? "Scanning…" : "🔍 Univariable Scan"}
+              <Tip wide text="Fits a separate Cox PH model for each predictor on its own (Surv(time,event) ~ X), then ranks them by p-value. Use it to triage which candidates are worth carrying into the multivariable model. Common rule: take everything with univariable p < 0.10 forward and let the multivariable fit decide what stays — variables can lose or gain significance once you adjust for confounders (e.g. SMOKER univariable p ≈ 1.0 but p < 0.001 once AGE is controlled for)." />
             </button>
           )}
           {coxError && <p className="text-xs text-red-500">{coxError}</p>}
@@ -744,12 +746,12 @@ export default function SurvivalAdvancedPanel() {
         {coxScanResult.length > 0 && (
           <div className="rounded-lg border border-gray-200 overflow-auto">
             <div className="bg-gray-50 px-3 py-2 border-b border-gray-200 flex items-center justify-between">
-              <p className="text-xs font-semibold text-gray-600">Univariable Cox Tarama — Her Değişken Ayrı Ayrı</p>
-              <button onClick={() => setCoxScanResult([])} className="text-[10px] text-gray-400 hover:text-red-500">✕ Kapat</button>
+              <p className="text-xs font-semibold text-gray-600">Univariable Cox Scan — One Predictor at a Time</p>
+              <button onClick={() => setCoxScanResult([])} className="text-[10px] text-gray-400 hover:text-red-500">✕ Close</button>
             </div>
             <table className="text-xs w-full">
               <thead><tr className="bg-gray-50">
-                <th className="px-3 py-1.5 text-left text-gray-500">Değişken</th>
+                <th className="px-3 py-1.5 text-left text-gray-500">Variable</th>
                 <th className="px-3 py-1.5 text-left text-gray-500">N (events)</th>
                 <th className="px-3 py-1.5 text-left text-gray-500">HR</th>
                 <th className="px-3 py-1.5 text-left text-gray-500">95% CI</th>
@@ -765,7 +767,7 @@ export default function SurvivalAdvancedPanel() {
                       {r.hr_ci_low != null ? `${r.hr_ci_low.toFixed(3)} – ${r.hr_ci_high.toFixed(3)}` : "—"}
                     </td>
                     <td className={`px-3 py-1 font-semibold ${r.p !== null && r.p < 0.05 ? "text-indigo-700" : "text-gray-500"}`}>
-                      {r.p !== null ? (r.p < 0.001 ? "<0.001" : r.p.toFixed(4)) : "hata"}
+                      {r.p !== null ? (r.p < 0.001 ? "<0.001" : r.p.toFixed(4)) : "error"}
                     </td>
                   </tr>
                 ))}
@@ -773,7 +775,7 @@ export default function SurvivalAdvancedPanel() {
               <tfoot>
                 <tr className="border-t border-gray-200 bg-amber-50">
                   <td colSpan={5} className="px-3 py-1.5 text-[10px] text-amber-700">
-                    💡 p &lt; 0.10 olan değişkenleri multivariable Cox modeline ekle
+                    💡 Add variables with p &lt; 0.10 to the multivariable Cox model — the adjustment may reveal effects that look null on their own.
                   </td>
                 </tr>
               </tfoot>
