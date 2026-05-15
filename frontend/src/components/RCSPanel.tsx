@@ -589,13 +589,24 @@ export default function RCSPanel() {
             </>
           )}
 
-          {/* Imputation + Run */}
-          <MissingGuard strategy={imputation} onStrategyChange={setImputation} />
-
-          <button onClick={run} disabled={loading}
-            className="w-full py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors">
-            {loading ? "Running…" : `Run ${mode === "rcs" ? "RCS" : "Cox-RCS"}`}
-          </button>
+          <MissingGuard
+            sessionId={sid}
+            columns={mode === "rcs"
+              ? [rcsPredictor,
+                 ...(rcsOutcomeType === "cox" ? [rcsCoxDuration, rcsCoxEvent] : [rcsOutcome]),
+                 ...rcsCovariates]
+              : [crxDuration, crxEvent,
+                 crxTerm1.column,
+                 ...(crxUseTerm2 ? [crxTerm2.column] : []),
+                 ...crxCovariates]}
+            imputation={imputation}
+            onImputation={setImputation}
+          >
+            <button onClick={run} disabled={loading}
+              className="w-full py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+              {loading ? "Running…" : `Run ${mode === "rcs" ? "RCS" : "Cox-RCS"}`}
+            </button>
+          </MissingGuard>
         </div>
       </div>
 
