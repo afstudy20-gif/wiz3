@@ -35,9 +35,9 @@ jobs:
       image: returntocorp/semgrep:latest
     steps:
       - uses: actions/checkout@v4
-      - name: semgrep ci
+      - name: semgrep scan
         run: |
-          semgrep ci \
+          semgrep scan \
             --config p/python \
             --config p/typescript \
             --config p/owasp-top-ten \

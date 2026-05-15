@@ -1,13 +1,11 @@
 import { useState, useRef, useMemo } from "react";
 import Plot from "../PlotComponent";
 import TitledPlot from "./TitledPlot";
-import { useStore, PALETTES } from "../store";
+import { useStore } from "../store";
 import { runRCS, runCoxRCS } from "../api";
 import { Tip, InfoBanner } from "./Tip";
 import ResultExporter from "./ResultExporter";
 import { MissingGuard, type ImputationStrategy } from "./MissingGuard";
-
-const _pal = () => PALETTES[useStore.getState().plotTheme.palette] ?? PALETTES.indigo;
 
 const PLOT_LAYOUT = {
   paper_bgcolor: "transparent",

@@ -60,12 +60,6 @@ const MODEL_GUIDANCE: Record<string, { use: string; check: string; interpret: st
 
 // ── p-value adjustment for one/two-tailed hypothesis ─────────────────────────
 
-function fmtP(p: number | null | undefined): string {
-  if (p == null || Number.isNaN(p)) return "—";
-  if (p < 0.001) return "<0.001";
-  return p.toFixed(3);
-}
-
 
 function adjustP(p: number, beta: number, nullHyp: string): number {
   if (nullHyp === "leq") return beta > 0 ? Math.min(p / 2, 1) : Math.min(1 - p / 2, 1);

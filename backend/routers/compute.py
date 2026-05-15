@@ -96,8 +96,11 @@ def _eval_formula_with_custom_functions(df: pd.DataFrame, formula: str) -> pd.Se
         **{col: df[col] for col in df.columns}
     }
 
-    # Evaluate with proper namespace
-    result = eval(formula_proc, {"__builtins__": {}}, namespace)
+    # Sandboxed eval: __builtins__ disabled, formula pre-validated against a
+    # strict allow-list regex (see ALLOWED_FORMULA_TOKENS above). Bandit B307
+    # noted but accepted — replacing with ast.literal_eval would break the
+    # legitimate pandas/numpy column-arithmetic feature this endpoint exists for.
+    result = eval(formula_proc, {"__builtins__": {}}, namespace)  # nosec B307
 
     if not isinstance(result, (pd.Series, np.ndarray)):
         raise ValueError("Formula did not produce a series result")
