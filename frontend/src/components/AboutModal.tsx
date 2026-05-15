@@ -1,9 +1,10 @@
 import { X } from "lucide-react";
 
-const VERSION = "1.9.5";
-const BUILD = 96;
+const VERSION = "1.9.6";
+const BUILD = 97;
 
 const CHANGELOG = [
+  { ver: "1.9.6", date: "2026-05-15", notes: "Variable-kind dropdown audit. ROC Binary Outcome picker now narrows to detected 0/1 columns (was every column — could silently accept a continuous variable as the outcome). RCS Dose-Response Outcome picker now switches list by outcome type: Logistic = binary columns, Linear = numeric columns, Cox uses duration+event already. ICC tab now offers only numeric columns for Rater 1 / Rater 2 — Cohen's κ stays on all columns (categorical or binary). Inline amber warning when no binary column is detected, with a suggestion to recode in the Dictionary modal." },
   { ver: "1.9.5", date: "2026-05-15", notes: "Cox-RCS interaction HR surface: 2D contour ★ / 3D surface toggle. The 3D view uses Plotly's surface trace with a log-z axis, interactive rotate/zoom camera, and projected contour lines on the floor — easier to read the joint dose-response landscape across LDL × AGE (or any rcs × rcs pair). 2D contour with isohypse lines remains the default and stays publication-ready. Event-column pickers in the Cox / Cox-RCS / RCS-Cox forms now narrow to binary 0/1 columns (with an inline warning when none are detected)." },
   { ver: "1.9.4", date: "2026-05-15", notes: "Refresh app button (mirrors the not.drtr.uk Notepad pattern). Unregisters every service-worker registration for this origin, deletes the Cache Storage entries, then hard-reloads with a ?_r=... cache-bust query so the HTTP cache is bypassed too. Available in the main app header (with a confirm prompt because a dataset may be open), in the splash 'About uSTAT' row, and in the Power Analysis sub-header. Pure client-side, origin-scoped — other sites untouched, server session unaffected." },
   { ver: "1.9.3", date: "2026-05-14", notes: "Splash now surfaces the other drtr.uk apps as a 5-tile row (Notepad, PDF Annotator, ECG Caliper, noedw, low) with icons and short descriptions. Tiles open in a new tab. Provides a single discovery surface across the drtr.uk app suite without leaving uSTAT." },

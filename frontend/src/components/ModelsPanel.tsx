@@ -1775,9 +1775,17 @@ export default function ModelsPanel() {
                 <div>
                   <label className="text-xs text-gray-400 block mb-1">
                     Outcome {rcsOutcomeType === "logistic" ? "(binary 0/1)" : "(continuous)"}
+                    {rcsOutcomeType === "logistic" && binaryCols.length === 0 && (
+                      <span className="ml-1 text-[10px] text-amber-600">⚠ no binary 0/1 column</span>
+                    )}
                   </label>
                   <select className="select w-full" value={rcsOutcome} onChange={(e) => setRcsOutcome(e.target.value)}>
-                    {allCols.map((c) => <option key={c}>{c}</option>)}
+                    {(rcsOutcomeType === "logistic"
+                      ? (binaryCols.length > 0 ? binaryCols : allCols)
+                      : rcsOutcomeType === "linear"
+                      ? numCols
+                      : allCols
+                    ).map((c) => <option key={c}>{c}</option>)}
                   </select>
                 </div>
               )}

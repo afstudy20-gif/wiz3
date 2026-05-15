@@ -1120,7 +1120,7 @@ export default function CorrelationPanel() {
       <div className="flex-1 min-h-0">
         {activeTab === "Pairwise"  && <PairwiseTab sessionId={session.session_id} columns={numColumns} />}
         {activeTab === "Matrix"    && <MatrixTab   sessionId={session.session_id} columns={numColumns} />}
-        {activeTab === "ICC"       && <ICCTab      sessionId={session.session_id} columns={allColumns} />}
+        {activeTab === "ICC"       && <ICCTab      sessionId={session.session_id} columns={numColumns} />}
         {activeTab === "Cohen's κ" && <KappaTab    sessionId={session.session_id} columns={allColumns} />}
       </div>
     </div>

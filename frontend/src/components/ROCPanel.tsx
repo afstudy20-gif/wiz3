@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import Plot from "../PlotComponent";
 import PlotExporter from "./PlotExporter";
 import { useStore, PALETTES } from "../store";
@@ -159,7 +159,35 @@ export default function ROCPanel() {
 
   const numCols = session.columns.filter((c) => c.kind === "numeric").map((c) => c.name);
   const allCols = session.columns.map((c) => c.name);
-  const defaultOutcome = allCols.find((c) => /mortalite|death|event|outcome|binary|status/i.test(c)) ?? allCols[0] ?? "";
+
+  // Binary columns (≤ 2 unique non-null values, both ∈ {0, 1}) — ROC outcome
+  // must be 0/1. Falls back to allCols if no binary column is detected so
+  // the user can still type-override via the Dictionary modal.
+  const binaryCols = useMemo(() => {
+    const out: string[] = [];
+    for (const col of session.columns) {
+      const vals = new Set<unknown>();
+      for (const row of session.preview) {
+        const v = row[col.name];
+        if (v == null || v === "") continue;
+        vals.add(typeof v === "number" ? v : Number(v));
+        if (vals.size > 2) break;
+      }
+      const arr = [...vals];
+      if (arr.length === 0 || arr.length > 2) continue;
+      if (arr.every((v) => v === 0 || v === 1)) out.push(col.name);
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.session_id]);
+  // Prefer a binary 0/1 column whose name hints at an outcome; otherwise the
+  // first binary column; only fall back to allCols when no binary exists.
+  const defaultOutcome =
+    binaryCols.find((c) => /mortalite|death|event|outcome|binary|status/i.test(c))
+    ?? binaryCols[0]
+    ?? allCols.find((c) => /mortalite|death|event|outcome|binary|status/i.test(c))
+    ?? allCols[0]
+    ?? "";
 
   // ── Mode ──
   const [mode, setMode] = useState<"single" | "multi">("single");
@@ -444,10 +472,11 @@ export default function ROCPanel() {
         <div className="panel space-y-2">
           <label className="text-xs text-gray-400 block">
             Binary outcome <span className="text-gray-300">(must be 0/1)</span>
+            {binaryCols.length === 0 && <span className="ml-1 text-[10px] text-amber-600">⚠ no binary column detected — recode in Dictionary</span>}
           </label>
           <select className="select w-full text-xs" value={outcomeCol}
             onChange={(e) => { setOutcomeCol(e.target.value); setResult(null); setMultiResults([]); }}>
-            {allCols.map((c) => <option key={c} value={c}>{c}</option>)}
+            {(binaryCols.length > 0 ? binaryCols : allCols).map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>
 
