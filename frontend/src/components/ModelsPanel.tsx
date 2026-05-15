@@ -2083,11 +2083,32 @@ export default function ModelsPanel() {
           <CoxRCSResultPanel result={result} />
         ) : result && isRCS ? (
           /* ── RCS dose-response result ─────────────────────────────────────── */
+          (() => {
+            // Derive effect-label from backend model_type / effect_type so
+            // Cox runs render Hazard Ratio, logistic Odds Ratio, linear mean-difference.
+            const mt = (result.model_type as string | undefined) ?? "logistic";
+            const eff = mt === "cox"
+              ? { label: "Hazard Ratio", abbr: "HR", refValue: 1, axisType: "log" as const }
+              : mt === "linear"
+              ? { label: "Mean difference", abbr: "Δ", refValue: 0, axisType: "linear" as const }
+              : { label: "Odds Ratio", abbr: "OR", refValue: 1, axisType: "log" as const };
+            const useLogY = rcsLogScale && eff.axisType === "log";
+            const outcomeLabel = mt === "cox"
+              ? `${result.duration_col ?? ""} (${result.event_col ?? "event"})`
+              : (result.outcome ?? "");
+            const modelTitle = mt === "cox"
+              ? "Cox-RCS"
+              : mt === "linear"
+              ? "Linear RCS"
+              : "Logistic RCS";
+            return (
           <div className="panel space-y-3">
             {/* Header row */}
             <div className="flex items-center justify-between flex-wrap gap-2">
               <h4 className="font-semibold text-gray-900">
-                {result.predictor} &amp; {result.outcome}: Restricted Cubic Spline
+                {result.predictor}
+                {outcomeLabel ? <> &amp; <span className="text-indigo-700">{outcomeLabel}</span></> : null}
+                : {modelTitle}
               </h4>
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-3 text-xs text-gray-500">
@@ -2095,8 +2116,8 @@ export default function ModelsPanel() {
                   {result.aic != null && <span>AIC = {result.aic?.toFixed(1)}</span>}
                 </div>
                 <ResultExporter
-                  title={`RCS_${result.predictor}_${result.outcome}`}
-                  headers={["x", "OR", "CI_low", "CI_high"]}
+                  title={`RCS_${result.predictor}_${outcomeLabel || "result"}`}
+                  headers={["x", eff.abbr, "CI_low", "CI_high"]}
                   rows={(result.x_values as number[]).map((x: number, i: number) => [
                     x.toFixed(4),
                     (result.or_values as number[])[i]?.toFixed(4) ?? "",
@@ -2114,7 +2135,7 @@ export default function ModelsPanel() {
               {(result.knots as number[]).map((k: number, i: number) => (
                 <span key={i} className="bg-indigo-50 border border-indigo-100 text-indigo-600 rounded px-1.5 py-0.5">{k}</span>
               ))}
-              <span className="text-gray-400 ml-2">reference = <strong>{result.ref_value}</strong> (OR = 1.0)</span>
+              <span className="text-gray-400 ml-2">reference = <strong>{result.ref_value}</strong> ({eff.abbr} = {eff.refValue.toFixed(1)})</span>
             </div>
 
             {/* Dose-response plot */}
@@ -2133,15 +2154,15 @@ export default function ModelsPanel() {
                   showlegend: false,
                   name: "95% CI",
                 },
-                /* OR curve */
+                /* Effect curve */
                 {
                   type: "scatter" as const,
                   mode: "lines" as const,
                   x: result.x_values as number[],
                   y: result.or_values as number[],
                   line: { color: "#6366f1", width: 2.5 },
-                  name: "Odds Ratio",
-                  hovertemplate: `${result.predictor}: %{x:.2f}<br>OR: %{y:.3f}<extra></extra>`,
+                  name: eff.label,
+                  hovertemplate: `${result.predictor}: %{x:.2f}<br>${eff.abbr}: %{y:.3f}<extra></extra>`,
                 },
                 /* Knot markers on the curve */
                 {
@@ -2157,14 +2178,14 @@ export default function ModelsPanel() {
                   }),
                   marker: { color: "#6366f1", size: 8, line: { color: "#fff", width: 2 } },
                   name: "Knots",
-                  hovertemplate: `Knot: %{x:.2f}<br>OR: %{y:.3f}<extra></extra>`,
+                  hovertemplate: `Knot: %{x:.2f}<br>${eff.abbr}: %{y:.3f}<extra></extra>`,
                 },
                 /* Raw data rug (toggleable) */
                 ...(rcsShowData ? [{
                   type: "scatter" as const,
                   mode: "markers" as const,
                   x: result.x_data as number[],
-                  y: Array((result.x_data as number[]).length).fill(rcsLogScale ? Math.exp(-0.35) : 0.7),
+                  y: Array((result.x_data as number[]).length).fill(useLogY ? Math.exp(-0.35) : (eff.refValue === 0 ? eff.refValue - 0.5 : 0.7)),
                   marker: { color: "#6366f1", size: 3, opacity: 0.2, symbol: "line-ns-open" as const },
                   yaxis: "y" as const,
                   showlegend: false,
@@ -2185,20 +2206,20 @@ export default function ModelsPanel() {
                 yaxis: {
                   ...PLOT_LAYOUT.yaxis,
                   showgrid: showGrid,
-                  title: { text: "Odds Ratio (95% CI)" },
+                  title: { text: `${eff.label} (95% CI)` },
                   zeroline: false,
-                  ...(rcsLogScale ? { type: "log" as const, dtick: 1 } : {}),
+                  ...(useLogY ? { type: "log" as const, dtick: 1 } : {}),
                 },
                 shapes: [
-                  /* OR = 1 reference line */
+                  /* Reference line at eff.refValue (HR/OR = 1.0 or Δ = 0) */
                   { type: "line" as const, xref: "paper" as const, yref: "y" as const,
-                    x0: 0, x1: 1, y0: 1, y1: 1,
+                    x0: 0, x1: 1, y0: eff.refValue, y1: eff.refValue,
                     line: { color: "#9ca3af", width: 1.5, dash: "dash" as const } },
                 ],
                 annotations: [
                   { xref: "paper" as const, yref: "y" as const,
-                    x: 0.01, y: 1,
-                    text: "Reference Risk (OR = 1.0)",
+                    x: 0.01, y: eff.refValue,
+                    text: `Reference (${eff.abbr} = ${eff.refValue.toFixed(1)})`,
                     showarrow: false,
                     font: { size: 10, color: "#9ca3af" },
                     xanchor: "left" as const, yanchor: "bottom" as const },
@@ -2209,7 +2230,7 @@ export default function ModelsPanel() {
               style={{ width: "100%", height: 440 }}
               useResizeHandler
               config={{ responsive: true, displaylogo: false,
-                toImageButtonOptions: { format: "png", filename: `RCS_${result.predictor}_${result.outcome}`, width: 1200, height: 600 },
+                toImageButtonOptions: { format: "png", filename: `RCS_${result.predictor}_${outcomeLabel || "result"}`, width: 1200, height: 600 },
                 modeBarButtonsToRemove: ["select2d", "lasso2d"] }}
             />
 
@@ -2236,11 +2257,18 @@ export default function ModelsPanel() {
             </div>
 
             <InfoBanner>
-              The curve shows the <strong>non-linear dose-response</strong> relationship between <em>{result.predictor}</em> and the odds of <em>{result.outcome}</em>.
+              The curve shows the <strong>non-linear dose-response</strong> relationship between <em>{result.predictor}</em>{" "}
+              {mt === "cox"
+                ? <>and the <em>hazard</em> of <em>{result.event_col ?? "the event"}</em> (time = <em>{result.duration_col ?? ""}</em>)</>
+                : mt === "linear"
+                ? <>and the mean of <em>{result.outcome}</em></>
+                : <>and the odds of <em>{result.outcome}</em></>}.
               Filled circles mark the {result.n_knots} knot positions. The shaded band is the 95% CI.
-              <strong>Log scale</strong> is recommended for ORs — it symmetrises the curve and reveals J/U shapes that appear compressed on a linear axis.
+              {eff.axisType === "log" && <> <strong>Log scale</strong> is recommended for {eff.abbr}s — it symmetrises the curve and reveals J/U shapes that appear compressed on a linear axis.</>}
             </InfoBanner>
           </div>
+            );
+          })()
         ) : result ? (
           <>
             {/* Summary cards */}
