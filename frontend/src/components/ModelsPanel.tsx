@@ -1417,6 +1417,27 @@ export default function ModelsPanel() {
   const numCols = session.columns.filter((c) => c.kind === "numeric").map((c) => c.name);
   const allCols = session.columns.map((c) => c.name);
 
+  // Binary columns (≤ 2 unique non-null values, both in {0, 1}) — Cox event
+  // and logistic outcome pickers should narrow to these to avoid the user
+  // accidentally selecting a continuous variable as the event indicator.
+  const binaryCols = useMemo(() => {
+    const out: string[] = [];
+    for (const col of session.columns) {
+      const vals = new Set<unknown>();
+      for (const row of session.preview) {
+        const v = row[col.name];
+        if (v == null || v === "") continue;
+        vals.add(typeof v === "number" ? v : Number(v));
+        if (vals.size > 2) break;
+      }
+      const arr = [...vals];
+      if (arr.length === 0 || arr.length > 2) continue;
+      if (arr.every((v) => v === 0 || v === 1)) out.push(col.name);
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.session_id]);
+
   // Missing counts per column
   const missingCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -1455,14 +1476,14 @@ export default function ModelsPanel() {
   // Univariate RCS extras (Cox outcome + custom knot positions)
   const [rcsOutcomeType, setRcsOutcomeType] = useState<"logistic" | "linear" | "cox">("logistic");
   const [rcsCoxDuration, setRcsCoxDuration] = useState(numCols[0] ?? "");
-  const [rcsCoxEvent,    setRcsCoxEvent]    = useState(numCols[1] ?? "");
+  const [rcsCoxEvent,    setRcsCoxEvent]    = useState(binaryCols[0] ?? numCols[1] ?? "");
   const [rcsKnotMode,    setRcsKnotMode]    = useState<"harrell" | "custom">("harrell");
   const [rcsCustomKnots, setRcsCustomKnots] = useState("");  // comma-separated
 
   // ── Cox-RCS (multivariable) state ────────────────────────────────────────
   type SplineTermState = { column: string; n_knots: number; knot_positions: string; ref_value: string };
   const [crxDuration,   setCrxDuration]   = useState(numCols[0] ?? "");
-  const [crxEvent,      setCrxEvent]      = useState(numCols[1] ?? "");
+  const [crxEvent,      setCrxEvent]      = useState(binaryCols[0] ?? numCols[1] ?? "");
   const [crxTerm1, setCrxTerm1] = useState<SplineTermState>({ column: numCols[0] ?? "", n_knots: 4, knot_positions: "", ref_value: "" });
   const [crxTerm2, setCrxTerm2] = useState<SplineTermState>({ column: numCols[1] ?? "", n_knots: 4, knot_positions: "", ref_value: "" });
   const [crxUseTerm2,     setCrxUseTerm2]     = useState(false);
@@ -1471,7 +1492,7 @@ export default function ModelsPanel() {
   const [scaleFactors, setScaleFactors] = useState<Record<string, string>>({}); // col → divisor string
   const [selection, setSelection] = useState("p10"); // multivariate variable selection strategy
   const [durationCol, setDurationCol] = useState(numCols[0] ?? "");
-  const [eventCol, setEventCol] = useState(numCols[1] ?? "");
+  const [eventCol, setEventCol] = useState(binaryCols[0] ?? numCols[1] ?? "");
   const [groupCol, setGroupCol] = useState("");
   const cachedModels = useStore((s) => s.panelCache.models);
   const setCacheModels = useStore((s) => s.setPanelCache);
@@ -1691,9 +1712,12 @@ export default function ModelsPanel() {
                     </select>
                   </div>
                   <div>
-                    <label className="text-xs text-gray-400 block mb-1">Event column (0/1)</label>
+                    <label className="text-xs text-gray-400 block mb-1">
+                      Event column (0/1)
+                      {binaryCols.length === 0 && <span className="ml-1 text-[10px] text-amber-600">⚠ no binary 0/1 column detected — recode one in the Dictionary</span>}
+                    </label>
                     <select className="select w-full" value={rcsCoxEvent} onChange={(e) => setRcsCoxEvent(e.target.value)}>
-                      {numCols.map((c) => <option key={c}>{c}</option>)}
+                      {(binaryCols.length > 0 ? binaryCols : numCols).map((c) => <option key={c}>{c}</option>)}
                     </select>
                   </div>
                 </>
@@ -1769,9 +1793,12 @@ export default function ModelsPanel() {
                 </select>
               </div>
               <div>
-                <label className="text-xs text-gray-400 block mb-1">Event column (0/1)</label>
+                <label className="text-xs text-gray-400 block mb-1">
+                  Event column (0/1)
+                  {binaryCols.length === 0 && <span className="ml-1 text-[10px] text-amber-600">⚠ no binary 0/1 column detected</span>}
+                </label>
                 <select className="select w-full" value={crxEvent} onChange={(e) => setCrxEvent(e.target.value)}>
-                  {numCols.map((c) => <option key={c}>{c}</option>)}
+                  {(binaryCols.length > 0 ? binaryCols : numCols).map((c) => <option key={c}>{c}</option>)}
                 </select>
               </div>
               <SplineTermCard label="Spline term 1" term={crxTerm1} onChange={setCrxTerm1} numCols={numCols} />
@@ -1826,9 +1853,12 @@ export default function ModelsPanel() {
                 </select>
               </div>
               <div>
-                <label className="text-xs text-gray-400 block mb-1">Event column (0/1)</label>
+                <label className="text-xs text-gray-400 block mb-1">
+                  Event column (0/1)
+                  {binaryCols.length === 0 && <span className="ml-1 text-[10px] text-amber-600">⚠ no binary 0/1 column detected</span>}
+                </label>
                 <select className="select w-full" value={eventCol} onChange={(e) => setEventCol(e.target.value)}>
-                  {numCols.map((c) => <option key={c}>{c}</option>)}
+                  {(binaryCols.length > 0 ? binaryCols : numCols).map((c) => <option key={c}>{c}</option>)}
                 </select>
               </div>
               {model === "km" && (
