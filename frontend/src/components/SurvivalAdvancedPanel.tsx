@@ -676,8 +676,7 @@ export default function SurvivalAdvancedPanel() {
         {/* Stratified KM (small-multiples grid) — when stratify_col is set */}
         {kmResult?.strata && (() => {
           const strata: any[] = kmResult.strata;
-          const nCols = strata.length <= 2 ? strata.length : strata.length === 3 ? 3 : 2;
-          const miniH = 280;
+          const miniH = 420;
 
           const stratColMeta = columns.find((c) => c.name === kmStratify);
           const stratLabels = stratColMeta?.value_labels ?? {};
@@ -704,7 +703,7 @@ export default function SurvivalAdvancedPanel() {
                 </h4>
                 <span className="text-xs text-gray-400">{strata.length} strata · {kmResult.n_total ?? "?"} total</span>
               </div>
-              <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${nCols}, minmax(0, 1fr))` }}>
+              <div className="grid gap-4 grid-cols-1">
                 {strata.map((stratum: any) => {
                   const stratLabel = stratLabels[String(stratum.label)] ?? stratum.label;
                   const pAnnot = stratum.logrank?.p != null ? [{
