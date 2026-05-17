@@ -1,0 +1,217 @@
+"""Smoke tests for the 14 Tier-1 v2.0.0 endpoints.
+
+These cover endpoint registration, response shape, and a sanity check on
+the numbers. Heavier statistical correctness lives in the per-test files
+(test_diagnostics.py, etc).
+"""
+import io
+import numpy as np
+import pandas as pd
+import pytest
+
+from conftest import make_session
+
+
+@pytest.fixture(scope="module")
+def synth():
+    rng = np.random.default_rng(42)
+    n = 200
+    age = rng.normal(60, 10, n).clip(20, 90)
+    ldl = rng.normal(120, 30, n).clip(40, 250)
+    sex = rng.integers(0, 2, n)
+    dm = rng.integers(0, 2, n)
+    ht = rng.integers(0, 2, n)
+    logit_p = -4 + 0.04 * age + 0.01 * ldl + 0.5 * dm
+    p = 1 / (1 + np.exp(-logit_p))
+    event = (rng.uniform(0, 1, n) < p).astype(int)
+    duration = rng.exponential(500, n).clip(1, 1825)
+    severity = pd.qcut(age + rng.normal(0, 5, n), q=4, labels=False).astype(int) + 1
+    sid = np.repeat(np.arange(n // 4), 4)[:n]
+    base = rng.integers(1, 5, n)
+    r1 = base.copy()
+    r2 = np.where(rng.uniform(0, 1, n) < 0.85, base, rng.integers(1, 5, n))
+    r3 = np.where(rng.uniform(0, 1, n) < 0.80, base, rng.integers(1, 5, n))
+    return pd.DataFrame({
+        "AGE": age, "LDL": ldl, "SEX": sex, "DM": dm, "HT": ht,
+        "event": event, "duration": duration,
+        "severity": severity, "sid": sid,
+        "rater1": r1, "rater2": r2, "rater3": r3,
+    })
+
+
+@pytest.fixture(scope="module")
+def sid(synth):
+    return make_session(synth, "v2_session")
+
+
+@pytest.fixture(scope="module")
+def sid_tv(synth):
+    # Long-format 2 intervals per subject for Cox-TV
+    rows = []
+    for i, row in synth.head(50).reset_index(drop=True).iterrows():
+        mid = float(row["duration"]) / 2
+        rows.append({"sid": i, "start": 0.0, "stop": mid, "event": 0,
+                     "AGE": row["AGE"], "LDL": row["LDL"]})
+        rows.append({"sid": i, "start": mid, "stop": float(row["duration"]),
+                     "event": int(row["event"]), "AGE": row["AGE"], "LDL": row["LDL"] * 1.05})
+    return make_session(pd.DataFrame(rows), "v2_tv_session")
+
+
+# 1. VIF in linear coef rows
+def test_linear_has_vif(client, sid):
+    r = client.post("/api/models/linear",
+                    json={"session_id": sid, "outcome": "AGE", "predictors": ["LDL", "DM", "HT"]})
+    assert r.status_code == 200, r.text
+    coefs = r.json()["coefficients"]
+    assert all("vif" in c for c in coefs)
+
+
+# 2. Schoenfeld auto-attach + VIF on Cox
+def test_cox_auto_schoenfeld_and_vif(client, sid):
+    r = client.post("/api/models/survival/cox",
+                    json={"session_id": sid, "duration_col": "duration", "event_col": "event",
+                          "predictors": ["AGE", "LDL", "DM"]})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body.get("ph_test") is not None
+    assert any(c.get("vif") is not None for c in body["coefficients"])
+
+
+# 3. Hosmer-Lemeshow standalone
+def test_hosmer_lemeshow(client, sid):
+    r = client.post("/api/decision_curve/hosmer_lemeshow",
+                    json={"session_id": sid, "outcome": "event", "predictors": ["AGE", "LDL"]})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert "chi2" in d and "df" in d and "p" in d
+    assert 0 <= d["p"] <= 1
+
+
+# 4. ROC threshold table carries LR+/LR-/PPV/NPV
+def test_roc_threshold_diagnostics(client, sid):
+    r = client.post("/api/stats/roc",
+                    json={"session_id": sid, "score_column": "LDL", "outcome_column": "event"})
+    assert r.status_code == 200, r.text
+    sample = r.json()["curve"][len(r.json()["curve"]) // 2]
+    for k in ("sensitivity", "specificity", "ppv", "npv", "lr_pos", "lr_neg", "youden_j"):
+        assert k in sample, f"missing {k} in ROC threshold curve point"
+
+
+# 5. Fleiss kappa (>=3 raters)
+def test_fleiss_kappa(client, sid):
+    r = client.post("/api/stats/fleiss_kappa",
+                    json={"session_id": sid, "rater_cols": ["rater1", "rater2", "rater3"]})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert "kappa" in d and "interpretation" in d
+    assert d["n_raters"] == 3
+
+
+# 6. TOST equivalence
+@pytest.mark.parametrize("test_type", ["independent", "paired", "one_sample"])
+def test_tost(client, sid, test_type):
+    body = {"session_id": sid, "column": "LDL", "low": -10, "high": 10, "test_type": test_type}
+    if test_type == "independent":
+        body["group_column"] = "DM"
+    elif test_type == "paired":
+        body["paired_column"] = "AGE"
+    r = client.post("/api/stats/tost", json=body)
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert "p_overall" in d and "equivalent" in d
+
+
+# 7. GEE
+@pytest.mark.parametrize("fam,cov", [
+    ("binomial", "exchangeable"),
+    ("gaussian", "independence"),
+    ("poisson", "ar"),
+])
+def test_gee(client, sid, fam, cov):
+    out = {"binomial": "event", "gaussian": "AGE", "poisson": "DM"}[fam]
+    preds = ["LDL", "HT"] if fam != "gaussian" else ["LDL", "DM"]
+    r = client.post("/api/models/gee",
+                    json={"session_id": sid, "outcome": out, "predictors": preds,
+                          "group_col": "sid", "family": fam, "cov_struct": cov})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["n_clusters"] > 0 and d["n_obs"] > 0
+
+
+# 8. Ordinal logistic
+def test_ordinal(client, sid):
+    r = client.post("/api/models/ordinal",
+                    json={"session_id": sid, "outcome": "severity", "predictors": ["LDL", "SEX"]})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert len(d["categories_in_rank_order"]) >= 3
+    assert len(d["coefficients"]) >= 1
+    assert "brant_proportional_odds" in d
+
+
+# 9. Power: logistic
+def test_power_logistic(client):
+    r = client.post("/api/stats/power",
+                    json={"test": "logistic", "solve_for": "n", "alpha": 0.05, "power": 0.8,
+                          "log_or": 1.5, "p_event": 0.2, "tails": 2})
+    assert r.status_code == 200, r.text
+    assert r.json()["result"] is not None and r.json()["result"] > 0
+
+
+# 10. Power: survival_cox
+def test_power_survival_cox(client):
+    r = client.post("/api/stats/power",
+                    json={"test": "survival_cox", "solve_for": "n", "alpha": 0.05, "power": 0.8,
+                          "hr": 1.7, "event_rate": 0.3, "p_exposed": 0.5, "tails": 2})
+    assert r.status_code == 200, r.text
+    assert r.json()["result"] is not None and r.json()["result"] > 0
+
+
+# 11. Forest plot + DL meta-analysis
+def test_forest_meta(client):
+    rows = [
+        {"label": "S1", "est": 1.4, "ci_low": 1.0, "ci_high": 2.0},
+        {"label": "S2", "est": 1.7, "ci_low": 1.2, "ci_high": 2.4},
+        {"label": "S3", "est": 0.9, "ci_low": 0.7, "ci_high": 1.2},
+    ]
+    r = client.post("/api/charts/forest",
+                    json={"rows": rows, "effect_label": "OR", "x_axis": "log", "do_meta": True})
+    assert r.status_code == 200, r.text
+    m = r.json()["meta"]
+    assert m is not None
+    for k in ("pooled_est", "pooled_ci_low", "pooled_ci_high", "I_squared_pct", "Q", "tau2"):
+        assert k in m
+
+
+# 12. Cox time-varying covariates
+def test_cox_tv(client, sid_tv):
+    r = client.post("/api/models/survival/cox_tv",
+                    json={"session_id": sid_tv, "id_col": "sid", "start_col": "start",
+                          "stop_col": "stop", "event_col": "event", "predictors": ["AGE", "LDL"]})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["n_subjects"] > 0 and d["n_events"] >= 0
+
+
+# 13. Stepwise selection
+def test_stepwise(client, sid):
+    r = client.post("/api/models/stepwise",
+                    json={"session_id": sid, "model_type": "logistic", "outcome": "event",
+                          "candidates": ["AGE", "LDL", "DM", "HT", "SEX"],
+                          "direction": "both", "criterion": "aic"})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert "selected" in d and "final_aic" in d and "trace" in d
+
+
+# 14. Method appendix DOCX
+def test_method_appendix(client, sid):
+    # First ensure SOME audit-loggable analysis has run
+    client.post("/api/models/linear",
+                json={"session_id": sid, "outcome": "AGE", "predictors": ["LDL"]})
+    r = client.post("/api/pub_export/method_appendix",
+                    json={"session_id": sid, "title": "Test Methods"})
+    assert r.status_code == 200, r.text
+    ctype = r.headers.get("content-type", "")
+    assert "wordprocessingml" in ctype
+    assert len(r.content) > 1000
