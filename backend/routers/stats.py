@@ -1810,6 +1810,129 @@ def cohens_kappa(req: KappaRequest):
     }
 
 
+# ── TOST equivalence / non-inferiority tests ───────────────────────────────────
+
+class TOSTRequest(BaseModel):
+    session_id: str
+    column: str               # continuous outcome
+    group_column: Optional[str] = None   # for ind two-sample; None ⇒ one-sample vs mu
+    paired_column: Optional[str] = None  # for paired version (col1, col2)
+    low: float                # lower equivalence bound
+    high: float               # upper equivalence bound
+    mu: Optional[float] = 0.0  # reference for one-sample
+    test_type: str = "independent"  # "independent" | "paired" | "one_sample"
+
+
+@router.post("/tost")
+def tost(req: TOSTRequest):
+    """Two One-Sided Tests (TOST) for equivalence / non-inferiority.
+
+    H0: difference is OUTSIDE the [low, high] equivalence margin.
+    H1: difference lies WITHIN the equivalence margin.
+    p < α ⇒ equivalence demonstrated.
+
+    Three modes:
+      - independent: ttost_ind on two groups defined by group_column.
+      - paired: ttost_paired on two columns (column, paired_column).
+      - one_sample: tests mean(column) - mu within [low, high].
+
+    For non-inferiority pick a one-sided margin (e.g. low=-Inf, high=δ).
+    """
+    from statsmodels.stats.weightstats import ttost_ind, ttost_paired
+
+    df = _get_df(req.session_id)
+    if req.low >= req.high:
+        raise HTTPException(status_code=422, detail="low must be < high")
+
+    test_type = req.test_type
+    n1 = n2 = 0
+    mean1 = mean2 = std1 = std2 = None
+
+    if test_type == "independent":
+        if not req.group_column:
+            raise HTTPException(status_code=422, detail="independent TOST requires group_column.")
+        sub = df[[req.column, req.group_column]].dropna()
+        groups = sub[req.group_column].unique()
+        if len(groups) != 2:
+            raise HTTPException(status_code=422, detail=f"group_column must have exactly 2 levels, found {len(groups)}.")
+        a = sub.loc[sub[req.group_column] == groups[0], req.column].astype(float)
+        b = sub.loc[sub[req.group_column] == groups[1], req.column].astype(float)
+        n1, n2 = int(len(a)), int(len(b))
+        if n1 < 2 or n2 < 2:
+            raise HTTPException(status_code=400, detail="Each group needs ≥2 observations.")
+        mean1, mean2 = float(a.mean()), float(b.mean())
+        std1, std2 = float(a.std(ddof=1)), float(b.std(ddof=1))
+        p_overall, (t_low, p_low, _df_low), (t_high, p_high, _df_high) = ttost_ind(a, b, low=req.low, upp=req.high, usevar="pooled")
+        diff = mean1 - mean2
+        group_labels = [str(groups[0]), str(groups[1])]
+    elif test_type == "paired":
+        if not req.paired_column:
+            raise HTTPException(status_code=422, detail="paired TOST requires paired_column.")
+        sub = df[[req.column, req.paired_column]].dropna()
+        a = sub[req.column].astype(float)
+        b = sub[req.paired_column].astype(float)
+        n1 = n2 = int(len(a))
+        if n1 < 2:
+            raise HTTPException(status_code=400, detail="Need ≥2 paired observations.")
+        mean1, mean2 = float(a.mean()), float(b.mean())
+        std1, std2 = float(a.std(ddof=1)), float(b.std(ddof=1))
+        p_overall, (t_low, p_low, _df_low), (t_high, p_high, _df_high) = ttost_paired(a, b, low=req.low, upp=req.high)
+        diff = mean1 - mean2
+        group_labels = [req.column, req.paired_column]
+    elif test_type == "one_sample":
+        from scipy.stats import t as _t
+        col = df[req.column].dropna().astype(float)
+        n1 = int(len(col))
+        if n1 < 2:
+            raise HTTPException(status_code=400, detail="Need ≥2 observations.")
+        mean1 = float(col.mean())
+        std1 = float(col.std(ddof=1))
+        se = std1 / np.sqrt(n1)
+        mu = float(req.mu or 0.0)
+        # Lower one-sided: H0: mean - mu <= low ⇒ test (mean - mu - low) / SE > critical
+        t_low = (mean1 - mu - req.low) / se if se > 0 else float("inf")
+        p_low = float(_t.sf(t_low, df=n1 - 1))  # upper tail
+        # Upper one-sided: H0: mean - mu >= high ⇒ test (mean - mu - high) / SE < -critical
+        t_high = (mean1 - mu - req.high) / se if se > 0 else float("-inf")
+        p_high = float(_t.cdf(t_high, df=n1 - 1))  # lower tail
+        p_overall = max(p_low, p_high)
+        diff = mean1 - mu
+        group_labels = [req.column, f"μ₀ = {mu}"]
+    else:
+        raise HTTPException(status_code=422, detail=f"Unknown test_type '{test_type}'")
+
+    equivalent = p_overall < 0.05
+    interp = (
+        f"Equivalence demonstrated (both one-sided p < 0.05) — observed difference is statistically "
+        f"within the [{req.low}, {req.high}] margin."
+        if equivalent else
+        f"Equivalence NOT demonstrated (max of two one-sided p = {p_overall:.4f}) — cannot conclude "
+        f"the difference lies within [{req.low}, {req.high}]."
+    )
+    return {
+        "test": f"TOST ({test_type})",
+        "test_type": test_type,
+        "n1": n1, "n2": n2,
+        "mean1": mean1, "mean2": mean2,
+        "std1": std1, "std2": std2,
+        "difference": float(diff),
+        "low_bound": float(req.low),
+        "high_bound": float(req.high),
+        "t_low": float(t_low), "p_low": float(p_low),
+        "t_high": float(t_high), "p_high": float(p_high),
+        "p_overall": float(p_overall),
+        "equivalent": bool(equivalent),
+        "group_labels": group_labels,
+        "interpretation": interp,
+        "result_text": (
+            f"Two One-Sided Tests for equivalence within [{req.low}, {req.high}]. "
+            f"Lower bound test: t = {t_low:.3f}, p = {p_low:.4f}. "
+            f"Upper bound test: t = {t_high:.3f}, p = {p_high:.4f}. "
+            f"{interp}"
+        ),
+    }
+
+
 # ── Fleiss κ (≥3 raters) ───────────────────────────────────────────────────────
 
 class FleissKappaRequest(BaseModel):
@@ -1923,6 +2046,14 @@ class PowerRequest(BaseModel):
     ratio: float = 1.0  # n2/n1 for two-sample tests
     p1: Optional[float] = None
     p2: Optional[float] = None
+    # Logistic regression (req.test == "logistic")
+    log_or: Optional[float] = None       # expected odds ratio
+    p_event: Optional[float] = None      # baseline event probability
+    r2_other: Optional[float] = 0.0      # R² of predictor against the rest (variance inflation)
+    # Adjusted Cox / log-rank (req.test == "survival_cox")
+    hr: Optional[float] = None           # expected hazard ratio
+    event_rate: Optional[float] = None   # cumulative event probability
+    p_exposed: Optional[float] = 0.5     # proportion exposed/treated
 
 
 @router.post("/power")
@@ -2069,6 +2200,135 @@ def run_power(req: PowerRequest):
                 result = float(ana.solve_power(effect_size=eff, nobs1=req.n, alpha=a, power=None, ratio=ratio, alternative=alt))
                 label  = f"Power (1-β) = {result:.4f}  ({result*100:.1f}%)"
                 curve  = _curve(pw, max(int(req.n)*4, 100))
+
+    # ── Logistic regression — Hsieh 1989 / 1998 formula ────────────────────────
+    # n = (Z_{1-α/2} + Z_{1-β})² / (p (1-p) β² (1-R²))
+    # where β = log(OR), p = baseline event probability, R² = predictor's
+    # R² when regressed on the rest of the covariate matrix (variance
+    # inflation due to adjustment; pass 0 for unadjusted).
+    elif req.test == "logistic":
+        from scipy.stats import norm as _norm
+
+        def _required_n(log_or, p_event, power_target, alpha_target, r2_other, tails):
+            z_a = _norm.ppf(1 - alpha_target / (2 if tails == 2 else 1))
+            z_b = _norm.ppf(power_target)
+            return float(((z_a + z_b) ** 2) / (p_event * (1 - p_event) * (log_or ** 2) * (1 - (r2_other or 0.0))))
+
+        def _power_from_n(log_or, p_event, n_total, alpha_target, r2_other, tails):
+            z_a = _norm.ppf(1 - alpha_target / (2 if tails == 2 else 1))
+            se = float(np.sqrt(1.0 / (n_total * p_event * (1 - p_event) * (1 - (r2_other or 0.0)))))
+            z = abs(log_or) / se if se > 0 else 0.0
+            return float(_norm.cdf(z - z_a))
+
+        if not req.log_or and req.effect_size is not None:
+            # Convenience: accept effect_size as OR (front-end may pass it that way)
+            log_or = float(np.log(req.effect_size))
+        elif req.log_or is not None:
+            # Accept either β (log OR) or OR > 0 in the same field — small ORs
+            # under 0.05 are rare and confusable with logs, so treat positive
+            # values > 0 as OR by convention and convert.
+            log_or = float(req.log_or) if req.log_or <= 0 else float(np.log(req.log_or))
+        else:
+            raise HTTPException(400, "Logistic power needs 'log_or' (or 'effect_size' = OR).")
+        if req.p_event is None or not (0 < req.p_event < 1):
+            raise HTTPException(400, "Logistic power needs 'p_event' in (0, 1).")
+        r2 = req.r2_other if req.r2_other is not None else 0.0
+
+        def pw(n_): return _power_from_n(log_or, req.p_event, n_, a, r2, req.tails)
+        if req.solve_for == "n":
+            n_req = _ceil(_required_n(log_or, req.p_event, req.power or 0.8, a, r2, req.tails))
+            result, label = n_req, f"n = {n_req}"
+            curve = _curve(pw, max(n_req * 4, 200))
+        elif req.solve_for == "power":
+            result = float(pw(int(req.n)))
+            label  = f"Power (1-β) = {result:.4f}  ({result*100:.1f}%)"
+            curve  = _curve(pw, max(int(req.n) * 4, 200))
+        else:
+            # Solve for OR given n and power → invert numerically.
+            from scipy.optimize import brentq
+            try:
+                f = lambda lo: pw(int(req.n)) - req.power if False else None
+                or_solved = brentq(
+                    lambda lo: _power_from_n(lo, req.p_event, int(req.n), a, r2, req.tails) - (req.power or 0.8),
+                    1e-3, 5.0,
+                )
+                result = float(np.exp(or_solved))
+                label  = f"Minimum detectable OR = {result:.3f}"
+                # Curve: how power scales with n for this OR
+                ll = float(or_solved)
+                curve = _curve(lambda n_: _power_from_n(ll, req.p_event, n_, a, r2, req.tails), max(int(req.n)*4, 200))
+            except Exception:
+                result = None
+                label = "Could not solve for OR — try different power / n combination."
+
+    # ── Adjusted Cox / log-rank — Schoenfeld 1981 + Hsieh 1998 ────────────────
+    # Required number of EVENTS d = (Z_{1-α/2} + Z_{1-β})² / (p_exp (1-p_exp) log(HR)²)
+    # Then required N = d / event_rate. The (1 - R²) adjustment when present
+    # inflates n for collinear covariate sets (Hsieh 1998).
+    elif req.test == "survival_cox":
+        from scipy.stats import norm as _norm
+
+        if req.hr is None or req.hr <= 0:
+            raise HTTPException(400, "Cox power needs 'hr' > 0.")
+        if req.event_rate is None or not (0 < req.event_rate < 1):
+            raise HTTPException(400, "Cox power needs 'event_rate' in (0, 1).")
+        p_exp = req.p_exposed if req.p_exposed is not None else 0.5
+        if not (0 < p_exp < 1):
+            raise HTTPException(400, "'p_exposed' must be in (0, 1).")
+        r2 = req.r2_other or 0.0
+        log_hr = float(np.log(req.hr))
+
+        def _events_required(power_target):
+            z_a = _norm.ppf(1 - a / (2 if req.tails == 2 else 1))
+            z_b = _norm.ppf(power_target)
+            return ((z_a + z_b) ** 2) / (p_exp * (1 - p_exp) * (log_hr ** 2))
+
+        def _n_required(power_target):
+            d = _events_required(power_target)
+            return d / (req.event_rate * (1 - r2))
+
+        def _power_from_n(n_total):
+            z_a = _norm.ppf(1 - a / (2 if req.tails == 2 else 1))
+            d = n_total * req.event_rate * (1 - r2)
+            if d <= 0:
+                return 0.0
+            se = float(np.sqrt(1.0 / (d * p_exp * (1 - p_exp))))
+            z = abs(log_hr) / se if se > 0 else 0.0
+            return float(_norm.cdf(z - z_a))
+
+        def pw(n_): return _power_from_n(n_)
+        if req.solve_for == "n":
+            n_req = _ceil(_n_required(req.power or 0.8))
+            d_req = _ceil(_events_required(req.power or 0.8))
+            result, label = n_req, f"n = {n_req} (events = {d_req})"
+            curve = _curve(pw, max(n_req * 4, 200))
+        elif req.solve_for == "power":
+            result = float(pw(int(req.n)))
+            label  = f"Power (1-β) = {result:.4f}  ({result*100:.1f}%)"
+            curve  = _curve(pw, max(int(req.n) * 4, 200))
+        else:
+            # Solve for HR
+            from scipy.optimize import brentq
+            try:
+                hr_solved = brentq(
+                    lambda lh: _power_from_n_with_hr(lh, int(req.n), p_exp, req.event_rate, r2, a, req.tails) - (req.power or 0.8) if False else 0,
+                    0.01, 10.0,
+                )
+            except Exception:
+                pass
+            # Closed-form: events d = n × event_rate × (1 − R²);
+            # log(HR) = (Z_α + Z_β) / √(d × p(1−p))
+            d_total = int(req.n) * req.event_rate * (1 - r2)
+            if d_total > 0:
+                z_a = _norm.ppf(1 - a / (2 if req.tails == 2 else 1))
+                z_b = _norm.ppf(req.power or 0.8)
+                lh = (z_a + z_b) / np.sqrt(d_total * p_exp * (1 - p_exp))
+                result = float(np.exp(lh))
+                label  = f"Minimum detectable HR = {result:.3f}"
+                lh_val = float(lh)
+                curve = _curve(lambda n_: _power_from_n(n_), max(int(req.n) * 4, 200))
+            else:
+                result, label = None, "Insufficient events to solve for HR."
 
     # ── Chi-square ─────────────────────────────────────────────────────────────
     elif req.test == "chi2":

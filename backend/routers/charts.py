@@ -203,3 +203,114 @@ def bar(req: ChartRequest):
             "x": req.x, "y": "count",
             "data": [{"label": str(k), "value": int(v)} for k, v in counts.items()],
         }
+
+
+# ── Forest plot ─────────────────────────────────────────────────────────────────
+
+class ForestRow(BaseModel):
+    label: str
+    est: float
+    ci_low: float
+    ci_high: float
+    weight: Optional[float] = None  # for meta-analysis weighting
+    group: Optional[str] = None     # optional group label (sub-heading)
+    n: Optional[int] = None         # optional sample-size annotation
+
+
+class ForestRequest(BaseModel):
+    rows: List[ForestRow]
+    effect_label: str = "OR"        # OR / HR / RR / β / Mean difference
+    x_axis: str = "log"             # "log" for OR/HR/RR, "linear" for β/diff
+    null_line: float = 1.0          # reference value (1.0 for log-scale, 0 for linear)
+    title: Optional[str] = None
+    sort_by: Optional[str] = None   # "effect" | "p" | None (preserve order)
+    # Meta-analysis (optional):
+    do_meta: bool = False
+    meta_method: str = "DL"         # DerSimonian-Laird random-effects
+
+
+@router.post("/forest")
+def forest_plot(req: ForestRequest):
+    """Forest plot data + optional DerSimonian-Laird meta-analysis pool.
+
+    Accepts a flat row array of {label, est, ci_low, ci_high, weight?, group?}
+    and returns Plotly-ready traces + (when do_meta=True) a pooled diamond
+    with I² heterogeneity and τ². Same backend serves two UI hooks:
+    univariate-OR screening (from logistic_table) and study-level
+    meta-analysis (free-form upload).
+    """
+    rows = [r.dict() for r in req.rows]
+    if not rows:
+        raise HTTPException(status_code=422, detail="rows array is empty.")
+    if req.sort_by == "effect":
+        rows.sort(key=lambda r: r["est"])
+    # SE inferred from CI assuming symmetric on the log/linear scale.
+    log_scale = req.x_axis == "log"
+    for r in rows:
+        if log_scale:
+            r["log_est"] = float(np.log(max(r["est"], 1e-12)))
+            r["log_low"] = float(np.log(max(r["ci_low"], 1e-12)))
+            r["log_high"] = float(np.log(max(r["ci_high"], 1e-12)))
+            r["se"] = (r["log_high"] - r["log_low"]) / (2 * 1.96)
+        else:
+            r["se"] = (r["ci_high"] - r["ci_low"]) / (2 * 1.96)
+
+    meta = None
+    if req.do_meta and len(rows) >= 2:
+        ests = np.array([r["log_est"] if log_scale else r["est"] for r in rows], dtype=float)
+        ses  = np.array([r["se"] for r in rows], dtype=float)
+        wts_fe = 1.0 / (ses ** 2)
+        wts_fe = wts_fe / wts_fe.sum()  # normalise
+        # Fixed-effect mean
+        mu_fe = float(np.sum(wts_fe * ests))
+        var_fe = float(1.0 / np.sum(1.0 / (ses ** 2)))
+        # Cochran Q and τ² (DerSimonian-Laird)
+        q = float(np.sum((1.0 / (ses ** 2)) * (ests - mu_fe) ** 2))
+        dfree = len(rows) - 1
+        c = float(np.sum(1.0 / (ses ** 2)) - np.sum((1.0 / (ses ** 2)) ** 2) / np.sum(1.0 / (ses ** 2)))
+        tau2 = max(0.0, (q - dfree) / c if c > 0 else 0.0)
+        # Random-effects re-weighting
+        wts_re = 1.0 / (ses ** 2 + tau2)
+        mu_re = float(np.sum(wts_re * ests) / np.sum(wts_re))
+        var_re = float(1.0 / np.sum(wts_re))
+        se_re = float(np.sqrt(var_re))
+        ci_low_re = float(mu_re - 1.96 * se_re)
+        ci_high_re = float(mu_re + 1.96 * se_re)
+        i2 = max(0.0, (q - dfree) / q * 100.0) if q > 0 else 0.0
+        from scipy.stats import chi2 as _chi2
+        q_p = float(1 - _chi2.cdf(q, dfree)) if dfree > 0 else 1.0
+        if log_scale:
+            pooled_est = float(np.exp(mu_re))
+            pooled_low = float(np.exp(ci_low_re))
+            pooled_high = float(np.exp(ci_high_re))
+        else:
+            pooled_est = float(mu_re)
+            pooled_low = float(ci_low_re)
+            pooled_high = float(ci_high_re)
+        meta = {
+            "method": req.meta_method,
+            "pooled_est": round(pooled_est, 4),
+            "pooled_ci_low": round(pooled_low, 4),
+            "pooled_ci_high": round(pooled_high, 4),
+            "tau2": round(tau2, 6),
+            "Q": round(q, 4),
+            "Q_df": dfree,
+            "Q_p": round(q_p, 4),
+            "I_squared_pct": round(i2, 2),
+            "k_studies": len(rows),
+            "result_text": (
+                f"DerSimonian-Laird random-effects meta-analysis (k = {len(rows)} studies). "
+                f"Pooled {req.effect_label} = {pooled_est:.3f} (95% CI {pooled_low:.3f}–{pooled_high:.3f}). "
+                f"Heterogeneity Q({dfree}) = {q:.2f}, p = {q_p:.4f}, I² = {i2:.1f}%, τ² = {tau2:.4f}."
+            ),
+        }
+
+    return {
+        "type": "forest",
+        "effect_label": req.effect_label,
+        "x_axis": req.x_axis,
+        "null_line": req.null_line,
+        "title": req.title,
+        "rows": rows,
+        "meta": meta,
+    }

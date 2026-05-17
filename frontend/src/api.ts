@@ -75,6 +75,14 @@ export const runCohensKappa = (data: object) => api.post("/api/stats/cohens_kapp
 export const runFleissKappa = (data: object) => api.post("/api/stats/fleiss_kappa", data);
 export const runPower       = (data: object) => api.post("/api/stats/power", data);
 export const runHosmerLemeshow = (data: object) => api.post("/api/decision_curve/hosmer_lemeshow", data);
+export const runTOST           = (data: object) => api.post("/api/stats/tost", data);
+export const runGEE            = (data: object) => api.post("/api/models/gee", data);
+export const runOrdinal        = (data: object) => api.post("/api/models/ordinal", data);
+export const runCoxTV          = (data: object) => api.post("/api/models/survival/cox_tv", data);
+export const runStepwise       = (data: object) => api.post("/api/models/stepwise", data);
+export const runForest         = (data: object) => api.post("/api/charts/forest", data);
+export const downloadMethodAppendix = (sessionId: string, title?: string) =>
+  api.post("/api/pub_export/method_appendix", { session_id: sessionId, title: title ?? "Statistical Methods" }, { responseType: "blob" });
 
 // Repeated measures
 export const runPairedTTest  = (data: object) => api.post("/api/repeated/paired_ttest", data);

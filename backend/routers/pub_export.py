@@ -398,3 +398,188 @@ def _extract_keys(template: str) -> list:
     """Extract {key} placeholders from a format string."""
     import re
     return re.findall(r"\{(\w+)\}", template)
+
+
+# ── Method appendix DOCX from session audit log ──────────────────────────────
+
+# Map raw audit action codes to human-readable Methods-section phrasing.
+_ACTION_HUMAN: Dict[str, str] = {
+    "ttest": "Independent samples t-test (Welch / pooled)",
+    "anova": "One-way ANOVA with Tukey HSD post-hoc",
+    "ancova": "Analysis of covariance (ANCOVA)",
+    "two_way_anova": "Two-way ANOVA",
+    "rm_anova": "Repeated-measures ANOVA",
+    "mixed_anova": "Mixed-design ANOVA",
+    "paired_ttest": "Paired-samples t-test",
+    "mannwhitney": "Mann-Whitney U test",
+    "wilcoxon_signed_rank": "Wilcoxon signed-rank test",
+    "kruskal": "Kruskal-Wallis H test with Dunn post-hoc",
+    "friedman": "Friedman test with pairwise Wilcoxon (Holm-corrected)",
+    "chisquare": "Chi-square test of independence",
+    "fisher": "Fisher's exact test",
+    "mcnemar": "McNemar's test",
+    "cochran_q": "Cochran's Q test",
+    "mantel_haenszel": "Cochran-Mantel-Haenszel test",
+    "tost": "Two One-Sided Tests for equivalence",
+    "fleiss_kappa": "Fleiss' κ (multi-rater agreement)",
+    "cohens_kappa": "Cohen's κ (inter-rater agreement)",
+    "icc": "Intraclass correlation coefficient (Shrout & Fleiss 1979)",
+    "bland_altman": "Bland-Altman analysis",
+    "passing_bablok": "Passing-Bablok regression",
+    "deming": "Deming regression",
+    "concordance": "Lin's concordance correlation coefficient",
+    "cronbach": "Cronbach's α reliability",
+    "roc": "Receiver operating characteristic (ROC) analysis",
+    "roc_compare": "DeLong's test for paired ROC AUCs",
+    "calibration": "Logistic calibration (slope/intercept) + Hosmer-Lemeshow goodness-of-fit",
+    "hosmer_lemeshow": "Hosmer-Lemeshow goodness-of-fit test",
+    "dca": "Decision curve analysis (Vickers & Elkin 2006)",
+    "linear": "Linear regression (OLS)",
+    "logistic": "Multivariable logistic regression",
+    "logistic_table": "Univariate + multivariable logistic regression (publication table)",
+    "poisson": "Poisson regression",
+    "gamma": "Gamma regression (GLM)",
+    "negbinom": "Negative binomial regression",
+    "rcs": "Restricted cubic spline regression",
+    "cox_rcs": "Multivariable Cox-RCS regression",
+    "ordinal": "Ordinal logistic regression (proportional odds)",
+    "gee": "Generalized estimating equations (population-averaged)",
+    "lmm": "Linear mixed model (random intercept / slope, REML)",
+    "survival_km": "Kaplan-Meier survival analysis with log-rank test",
+    "survival_cox": "Cox proportional hazards regression (+ Schoenfeld PH test)",
+    "cox_tv": "Cox regression with time-varying covariates",
+    "fine_gray": "Fine-Gray competing-risks regression",
+    "landmark": "Landmark survival analysis",
+    "evalue": "E-value sensitivity analysis (VanderWeele 2017)",
+    "psm": "Propensity score matching (Austin 2011 standards)",
+    "mice": "Multivariate imputation by chained equations (MICE)",
+    "stepwise": "Stepwise variable selection (AIC / BIC / p)",
+    "power": "Power / sample-size calculation",
+    "table1": "Demographic baseline table (Table 1)",
+}
+
+
+class MethodAppendixRequest(BaseModel):
+    session_id: str
+    title: str = "Statistical Methods"
+    include_data_io: bool = True       # include 'CSV / Excel imported, n rows, n cols'
+    include_software: bool = True      # include software / package / version block
+
+
+@router.post("/method_appendix")
+def method_appendix_docx(req: MethodAppendixRequest):
+    """Build a Methods-section DOCX from the session audit log.
+
+    Walks the audit log, deduplicates analysis types, lists each in
+    publication-ready phrasing alongside the underlying package + version
+    + random seed (where applicable). Result is a one-shot 'Methods'
+    section the user can paste into a manuscript.
+    """
+    if not HAS_DOCX:
+        raise HTTPException(status_code=500, detail="python-docx not installed.")
+
+    audit = store.get_audit(req.session_id)
+    if not audit:
+        raise HTTPException(status_code=404, detail="No audit log for this session (run an analysis first).")
+
+    # Bucket by action code, count occurrences.
+    counts: Dict[str, int] = {}
+    seeds: List[int] = []
+    for entry in audit:
+        action = str(entry.get("action", ""))
+        counts[action] = counts.get(action, 0) + 1
+        params = entry.get("params") or {}
+        seed = params.get("random_state") if isinstance(params, dict) else None
+        if seed is not None and isinstance(seed, (int, float)):
+            seeds.append(int(seed))
+
+    doc = Document()
+    style = doc.styles["Normal"]
+    style.font.name = "Times New Roman"
+    style.font.size = Pt(11)
+
+    heading = doc.add_paragraph()
+    run = heading.add_run(req.title)
+    run.bold = True
+    run.font.size = Pt(14)
+
+    # ── Software paragraph ─────────────────────────────────────────────────
+    if req.include_software:
+        try:
+            import sys as _sys
+            import statsmodels as _sm
+            import lifelines as _lf
+            import sklearn as _sk
+            import scipy as _sci
+            import numpy as _np
+            import pandas as _pd
+            versions = (
+                f"Python {_sys.version.split()[0]}, pandas {_pd.__version__}, NumPy {_np.__version__}, "
+                f"SciPy {_sci.__version__}, statsmodels {_sm.__version__}, lifelines {_lf.__version__}, "
+                f"scikit-learn {_sk.__version__}"
+            )
+        except Exception:
+            versions = "Python 3.11+, pandas, NumPy, SciPy, statsmodels, lifelines, scikit-learn"
+        seed_phrase = ""
+        if seeds:
+            uniq_seeds = sorted(set(seeds))
+            seed_phrase = (
+                f" Random-state seed{'s' if len(uniq_seeds) > 1 else ''} "
+                f"used for reproducibility: {', '.join(str(s) for s in uniq_seeds)}."
+            )
+        doc.add_paragraph(
+            f"All statistical analyses were performed in uSTAT (https://ustat.drtr.uk) using "
+            f"{versions}.{seed_phrase} Two-sided α was set at 0.05 unless otherwise stated; "
+            f"95% confidence intervals are reported for all effect estimates."
+        )
+
+    # ── Data I/O paragraph ─────────────────────────────────────────────────
+    if req.include_data_io:
+        df = store.get(req.session_id)
+        if df is not None:
+            n_rows, n_cols = df.shape
+            doc.add_paragraph(
+                f"The dataset comprised {n_rows} observations across {n_cols} variables. Missing values "
+                f"were handled by listwise deletion unless an explicit imputation strategy (median or "
+                f"multivariate imputation by chained equations) was selected for that analysis."
+            )
+
+    # ── Per-analysis methods bullets ───────────────────────────────────────
+    para = doc.add_paragraph()
+    para.add_run("Analyses performed").bold = True
+    excluded = {"data_updated", "metadata_updated", "kind_override", "case_filter", "case_filter_cleared", "row_added", "row_deleted", "column_renamed", "computed_column"}
+    used_actions = [a for a in counts.keys() if a and a not in excluded]
+    seen_methods = set()
+    for action in used_actions:
+        human = _ACTION_HUMAN.get(action)
+        if not human:
+            continue  # skip unknown / non-analytic actions
+        if human in seen_methods:
+            continue
+        seen_methods.add(human)
+        p = doc.add_paragraph(style="List Bullet")
+        run = p.add_run(human)
+        if counts[action] > 1:
+            run = p.add_run(f"  (run {counts[action]} times)")
+            run.italic = True
+
+    if not seen_methods:
+        doc.add_paragraph("No analyses recorded yet in the audit log.")
+
+    # ── Citation footer ────────────────────────────────────────────────────
+    foot = doc.add_paragraph()
+    foot_run = foot.add_run(
+        "\nCitation: Hoşoğlu Y. uSTAT — Browser-based Statistical Analysis Platform. "
+        "https://ustat.drtr.uk (CITATION.cff in the repository for machine-readable form)."
+    )
+    foot_run.italic = True
+    foot_run.font.size = Pt(9)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": 'attachment; filename="method_appendix.docx"'},
+    )

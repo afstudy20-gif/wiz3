@@ -1044,6 +1044,103 @@ def cox_regression(req: CoxRequest):
     }
 
 
+# ── Cox with time-varying covariates ────────────────────────────────────────
+
+class CoxTVRequest(BaseModel):
+    session_id: str
+    id_col: str                         # subject id (long-format groups)
+    start_col: str                      # start time of interval
+    stop_col: str                       # stop time of interval
+    event_col: str                      # 1 = event in this interval
+    predictors: List[str]               # may include time-varying values
+    imputation: Optional[str] = "listwise"
+
+
+@router.post("/survival/cox_tv")
+def cox_time_varying(req: CoxTVRequest):
+    """Cox proportional hazards with time-varying covariates.
+
+    Expects long-format input: one row per (subject, interval) with
+    (start, stop, event) per row and the predictor columns potentially
+    changing between rows for the same subject.
+
+    Uses lifelines.CoxTimeVaryingFitter. The PH assumption is relaxed
+    automatically (covariate values evolve over time), but global
+    significance of each predictor is still reported.
+    """
+    from lifelines import CoxTimeVaryingFitter
+
+    df_full = _get_df(req.session_id)
+    n_total = len(df_full)
+    cols = [req.id_col, req.start_col, req.stop_col, req.event_col] + req.predictors
+    missing = [c for c in cols if c not in df_full.columns]
+    if missing:
+        raise HTTPException(status_code=422, detail=f"Columns not found: {missing}")
+    df = apply_imputation(df_full, cols, req.imputation or "listwise")
+
+    # Coerce key columns
+    for c in [req.start_col, req.stop_col]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df[req.event_col] = pd.to_numeric(df[req.event_col], errors="coerce")
+    df = df.dropna(subset=[req.start_col, req.stop_col, req.event_col, req.id_col])
+    if len(df) < 10:
+        raise HTTPException(status_code=400, detail="Need ≥10 valid (subject, interval) rows.")
+    if (df[req.stop_col] <= df[req.start_col]).any():
+        raise HTTPException(status_code=422, detail="Found rows with stop ≤ start; each interval must have stop > start.")
+    if set(df[req.event_col].unique()) - {0, 1, 0.0, 1.0}:
+        raise HTTPException(status_code=422, detail="Event column must be 0/1.")
+    n_excluded = n_total - len(df)
+
+    # Encode predictors (dummy-code categoricals)
+    enc = pd.get_dummies(df[req.predictors], drop_first=True).astype(float)
+    if enc.shape[1] == 0:
+        raise HTTPException(status_code=422, detail="No usable predictor columns after encoding.")
+    fit_df = pd.concat([df[[req.id_col, req.start_col, req.stop_col, req.event_col]], enc], axis=1)
+
+    ctv = CoxTimeVaryingFitter()
+    try:
+        ctv.fit(fit_df, id_col=req.id_col, start_col=req.start_col, stop_col=req.stop_col, event_col=req.event_col)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Cox-TV fitting failed: {exc}")
+
+    summary = ctv.summary.reset_index()
+    vifs = _compute_vif(enc)
+    coefs = []
+    for _, row in summary.iterrows():
+        name = str(row["covariate"])
+        coefs.append({
+            "variable": name,
+            "log_hr": _safe_float(row["coef"]),
+            "hr": _safe_float(row["exp(coef)"]),
+            "se": _safe_float(row["se(coef)"]),
+            "z": _safe_float(row["z"]),
+            "p": _safe_float(row["p"]),
+            "hr_ci_low": _safe_float(row["exp(coef) lower 95%"]),
+            "hr_ci_high": _safe_float(row["exp(coef) upper 95%"]),
+            "vif": vifs.get(name),
+        })
+
+    n_subjects = int(df[req.id_col].nunique())
+    n_events = int(df[req.event_col].sum())
+    return {
+        "model": "Cox Proportional Hazards (time-varying covariates)",
+        "n_intervals": int(len(df)),
+        "n_subjects": n_subjects,
+        "n_events": n_events,
+        "n_total": int(n_total),
+        "n_excluded": int(n_excluded),
+        "imputation": req.imputation or "listwise",
+        "log_likelihood": _safe_float(ctv.log_likelihood_),
+        "concordance": _safe_float(getattr(ctv, "concordance_index_", None)),
+        "coefficients": coefs,
+        "result_text": (
+            f"Cox regression with time-varying covariates on {n_subjects} subjects "
+            f"({len(df)} interval rows, {n_events} events; {n_excluded} excluded). "
+            f"Predictors: {', '.join(req.predictors)}."
+        ),
+    }
+
+
 # ── Restricted Cubic Splines ─────────────────────────────────────────────────
 
 class RCSRequest(BaseModel):
@@ -2266,6 +2363,488 @@ def negative_binomial_regression(req: NegBinomRequest):
 
 
 # ── Linear Regression Diagnostic Plots ────────────────────────────────────────
+
+# ── GEE — Generalized Estimating Equations (standalone) ─────────────────────
+
+class GEERequest(BaseModel):
+    session_id: str
+    outcome: str
+    predictors: List[str]
+    group_col: str                      # subject / cluster id
+    family: str = "gaussian"            # gaussian | binomial | poisson
+    cov_struct: str = "exchangeable"    # independence | exchangeable | ar | autoregressive
+    imputation: Optional[str] = "listwise"
+
+
+@router.post("/gee")
+def gee_endpoint(req: GEERequest):
+    """Population-averaged regression for clustered / repeated-measures data.
+
+    Uses statsmodels Generalized Estimating Equations (Liang & Zeger 1986).
+    Family choices map outcome types:
+      gaussian  → continuous outcome (default)
+      binomial  → binary 0/1 outcome (logit link)
+      poisson   → count outcome (log link)
+    Working correlation structures:
+      independence    → no within-cluster correlation (conservative)
+      exchangeable    → equal correlation between any two observations in cluster
+      ar / autoregressive → AR(1) — first-order autoregressive (time-ordered)
+    """
+    from statsmodels.genmod.generalized_estimating_equations import GEE
+    from statsmodels.genmod.families import Gaussian, Binomial, Poisson
+    from statsmodels.genmod.cov_struct import Independence, Exchangeable, Autoregressive
+
+    fam_map = {"gaussian": Gaussian(), "binomial": Binomial(), "poisson": Poisson()}
+    cov_map = {
+        "independence": Independence(),
+        "exchangeable": Exchangeable(),
+        "ar": Autoregressive(),
+        "autoregressive": Autoregressive(),
+    }
+    if req.family not in fam_map:
+        raise HTTPException(status_code=422, detail=f"Unknown family '{req.family}'. Valid: gaussian/binomial/poisson.")
+    if req.cov_struct not in cov_map:
+        raise HTTPException(status_code=422, detail=f"Unknown cov_struct '{req.cov_struct}'.")
+
+    df_full = _get_df(req.session_id)
+    n_total = len(df_full)
+    cols = [req.outcome, req.group_col] + req.predictors
+    if req.group_col not in df_full.columns:
+        raise HTTPException(status_code=422, detail=f"Group column '{req.group_col}' not found.")
+    df = apply_imputation(df_full, cols, req.imputation or "listwise")
+    n_excluded = n_total - len(df)
+    if len(df) < 10:
+        raise HTTPException(status_code=400, detail="Need ≥10 complete observations.")
+
+    # Encode predictors (dummy-code categoricals, drop_first)
+    X = pd.get_dummies(df[req.predictors], drop_first=True).astype(float)
+    X = sm.add_constant(X, has_constant="add")
+    y = pd.to_numeric(df[req.outcome], errors="coerce")
+    if y.isna().all():
+        raise HTTPException(status_code=422, detail="Outcome has no numeric values.")
+
+    # Binomial sanity
+    if req.family == "binomial":
+        uniq = set(y.dropna().unique())
+        if not uniq <= {0, 1, 0.0, 1.0}:
+            raise HTTPException(status_code=422, detail="Binomial GEE requires outcome coded as 0/1.")
+
+    groups = df[req.group_col]
+    fam = fam_map[req.family]
+    cov = cov_map[req.cov_struct]
+
+    try:
+        model = GEE(y, X, groups=groups, family=fam, cov_struct=cov).fit()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"GEE fitting failed: {exc}")
+
+    ci = model.conf_int()
+    vifs = _compute_vif(X)
+    coefs = []
+    for var in model.params.index:
+        b = float(model.params[var])
+        row = {
+            "variable": str(var),
+            "estimate": b,
+            "se": float(model.bse[var]),
+            "z": float(model.tvalues[var]),
+            "p": float(model.pvalues[var]),
+            "ci_low": float(ci.loc[var, 0]),
+            "ci_high": float(ci.loc[var, 1]),
+            "vif": vifs.get(str(var)),
+        }
+        # Add exp(beta) interpretation for binomial / poisson
+        if req.family in ("binomial", "poisson"):
+            row["exp_estimate"] = float(np.exp(b))
+            row["exp_ci_low"] = float(np.exp(ci.loc[var, 0]))
+            row["exp_ci_high"] = float(np.exp(ci.loc[var, 1]))
+        coefs.append(row)
+
+    effect_label = {"binomial": "Odds Ratio", "poisson": "Rate Ratio"}.get(req.family)
+
+    return {
+        "model": f"GEE ({req.family}, cov={req.cov_struct})",
+        "outcome": req.outcome,
+        "group_col": req.group_col,
+        "family": req.family,
+        "cov_struct": req.cov_struct,
+        "n_obs": int(model.nobs),
+        "n_clusters": int(groups.nunique()),
+        "n_excluded": n_excluded,
+        "imputation": req.imputation or "listwise",
+        "coefficients": coefs,
+        "effect_label": effect_label,
+        "scale": float(model.scale) if hasattr(model, "scale") else None,
+        "result_text": (
+            f"GEE ({req.family} family, {req.cov_struct} working correlation) on {int(groups.nunique())} clusters "
+            f"({int(model.nobs)} observations). Outcome: {req.outcome}; predictors: {', '.join(req.predictors)}."
+        ),
+    }
+
+
+# ── Ordinal Logistic Regression (proportional odds) ─────────────────────────
+
+class OrdinalRequest(BaseModel):
+    session_id: str
+    outcome: str            # ordered categorical (will be integer-coded by rank)
+    predictors: List[str]
+    distr: str = "logit"    # logit | probit | cloglog (statsmodels OrderedModel)
+    imputation: Optional[str] = "listwise"
+
+
+@router.post("/ordinal")
+def ordinal_regression(req: OrdinalRequest):
+    """Cumulative-link proportional-odds ordinal regression.
+
+    Uses statsmodels.miscmodels.ordinal_model.OrderedModel. Returns one β
+    per predictor (proportional-odds assumption) + cut-point thresholds
+    α_k between successive categories. exp(β) is the cumulative odds ratio.
+
+    Brant-style proportional-odds assumption check: fits a separate
+    logistic model for each binary split y ≤ k vs y > k and compares
+    slopes via a Wald χ² against the pooled estimate. p < 0.05 ⇒ PO
+    assumption violated.
+    """
+    from statsmodels.miscmodels.ordinal_model import OrderedModel
+
+    if req.distr not in ("logit", "probit", "cloglog"):
+        raise HTTPException(status_code=422, detail="distr must be logit | probit | cloglog")
+
+    df_full = _get_df(req.session_id)
+    n_total = len(df_full)
+    df = apply_imputation(df_full, [req.outcome] + req.predictors, req.imputation or "listwise")
+    n_excluded = n_total - len(df)
+
+    if len(df) < 20:
+        raise HTTPException(status_code=400, detail="Need ≥20 complete observations for ordinal regression.")
+
+    # Rank-code the outcome: lowest rank = 0, highest = K-1.
+    y_raw = df[req.outcome]
+    cats = sorted(y_raw.dropna().unique(), key=lambda v: (isinstance(v, str), v))
+    if len(cats) < 3:
+        raise HTTPException(status_code=422, detail=f"Ordinal regression requires ≥3 ordered categories; outcome has {len(cats)}.")
+    rank_map = {c: i for i, c in enumerate(cats)}
+    y = y_raw.map(rank_map).astype(int).values
+
+    X = pd.get_dummies(df[req.predictors], drop_first=True).astype(float)
+    if X.shape[1] == 0:
+        raise HTTPException(status_code=422, detail="No usable predictor columns after encoding.")
+
+    try:
+        # OrderedModel handles its own intercept-equivalents (cutpoints) — do
+        # NOT add a column of ones, or the cutpoints become unidentified.
+        model = OrderedModel(y, X, distr=req.distr).fit(method="bfgs", disp=False, maxiter=200)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Ordinal regression fitting failed: {exc}")
+
+    ci = model.conf_int()
+    vifs = _compute_vif(X)
+    coefs = []
+    thresholds = []
+    for name in model.params.index:
+        b = float(model.params[name])
+        se_val = float(model.bse[name])
+        z_val = float(model.tvalues[name])
+        p_val = float(model.pvalues[name])
+        row = {
+            "variable": str(name),
+            "estimate": b,
+            "se": se_val,
+            "z": z_val,
+            "p": p_val,
+            "ci_low": float(ci.loc[name, 0]),
+            "ci_high": float(ci.loc[name, 1]),
+        }
+        # OrderedModel parameter names: predictor names AND threshold names
+        # ("0/1", "1/2", ...). Threshold params are reparameterised (log-diff
+        # between cut-points except the first); skip them in the OR/CI block.
+        is_threshold = "/" in str(name)
+        if is_threshold:
+            thresholds.append({
+                "name": str(name),
+                "estimate": b,
+                "se": se_val,
+                "p": p_val,
+                "ci_low": float(ci.loc[name, 0]),
+                "ci_high": float(ci.loc[name, 1]),
+            })
+        else:
+            row["odds_ratio"] = float(np.exp(b))
+            row["or_ci_low"] = float(np.exp(ci.loc[name, 0]))
+            row["or_ci_high"] = float(np.exp(ci.loc[name, 1]))
+            row["vif"] = vifs.get(str(name))
+            coefs.append(row)
+
+    # ── Brant-style proportional-odds assumption test ────────────────────────
+    # Run K-1 separate binary logits (y > k vs y ≤ k) and compare each slope
+    # to the pooled ordinal estimate via Wald χ² = (β_bin - β_ord)² / SE².
+    # p < 0.05 ⇒ slopes differ across cut-points ⇒ PO assumption violated.
+    brant = []
+    K = len(cats)
+    try:
+        from scipy.stats import chi2 as _chi2
+        for k_idx in range(K - 1):
+            y_bin = (y > k_idx).astype(int)
+            if y_bin.sum() < 2 or (1 - y_bin).sum() < 2:
+                continue
+            X_const = sm.add_constant(X, has_constant="add")
+            try:
+                bin_fit = sm.Logit(y_bin, X_const).fit(disp=False, maxiter=100)
+            except Exception:
+                continue
+            row = {"cutpoint": f"{cats[k_idx]} | {cats[k_idx+1]}", "slopes": []}
+            for var in X.columns:
+                b_bin = float(bin_fit.params[var])
+                se_bin = float(bin_fit.bse[var])
+                b_ord = float(model.params[var])
+                # Wald χ² of the difference: (β_bin - β_ord)² / SE_bin²
+                if se_bin > 0:
+                    chi2_val = (b_bin - b_ord) ** 2 / (se_bin ** 2)
+                    p_val = float(1 - _chi2.cdf(chi2_val, 1))
+                else:
+                    chi2_val, p_val = None, None
+                row["slopes"].append({
+                    "variable": str(var),
+                    "beta_binary": b_bin,
+                    "beta_ordinal": b_ord,
+                    "chi2": chi2_val,
+                    "p": p_val,
+                })
+            brant.append(row)
+    except Exception as exc:
+        brant = [{"error": str(exc)}]
+
+    return {
+        "model": f"Ordinal Logistic Regression ({req.distr})",
+        "outcome": req.outcome,
+        "categories_in_rank_order": [str(c) for c in cats],
+        "n": int(len(df)),
+        "n_excluded": int(n_excluded),
+        "imputation": req.imputation or "listwise",
+        "coefficients": coefs,
+        "thresholds": thresholds,
+        "log_likelihood": float(model.llf),
+        "aic": float(model.aic),
+        "bic": float(model.bic),
+        "brant_proportional_odds": brant,
+        "result_text": (
+            f"Ordinal logistic regression ({req.distr} link) on {len(cats)} ordered categories "
+            f"of {req.outcome} (n = {len(df)}, {n_excluded} excluded). Coefficients are interpreted as "
+            f"log cumulative odds; exp(β) = cumulative OR for being in a higher category per unit of predictor."
+        ),
+    }
+
+
+# ── Formal stepwise variable selection ──────────────────────────────────────
+
+class StepwiseRequest(BaseModel):
+    session_id: str
+    model_type: str               # "linear" | "logistic" | "cox"
+    outcome: Optional[str] = None # required for linear / logistic
+    duration_col: Optional[str] = None  # cox
+    event_col: Optional[str] = None     # cox
+    candidates: List[str]
+    direction: str = "both"       # forward | backward | both
+    criterion: str = "aic"        # aic | bic | p
+    p_enter: float = 0.05         # criterion=p only
+    p_exit: float = 0.10          # criterion=p only
+    forced_in: List[str] = []     # always retained (background / known confounders)
+    imputation: Optional[str] = "listwise"
+
+
+def _fit_for_stepwise(model_type: str, df: pd.DataFrame, preds: list, outcome: str | None,
+                      duration: str | None, event: str | None):
+    """Fit a model for stepwise candidate-evaluation. Returns
+    (aic, bic, p_per_predictor, llf). Raises on failure."""
+    if model_type == "linear":
+        X = pd.get_dummies(df[preds], drop_first=True).astype(float) if preds else pd.DataFrame(index=df.index)
+        X = sm.add_constant(X, has_constant="add")
+        y = pd.to_numeric(df[outcome], errors="coerce").astype(float)
+        m = sm.OLS(y, X).fit()
+        return float(m.aic), float(m.bic), {str(k): float(v) for k, v in m.pvalues.items() if k != "const"}, float(m.llf)
+    if model_type == "logistic":
+        X = pd.get_dummies(df[preds], drop_first=True).astype(float) if preds else pd.DataFrame(index=df.index)
+        X = sm.add_constant(X, has_constant="add")
+        y = pd.to_numeric(df[outcome], errors="coerce").astype(float)
+        m = sm.Logit(y, X).fit(disp=False, maxiter=100)
+        return float(m.aic), float(m.bic), {str(k): float(v) for k, v in m.pvalues.items() if k != "const"}, float(m.llf)
+    if model_type == "cox":
+        from lifelines import CoxPHFitter
+        enc = pd.get_dummies(df[preds], drop_first=True).astype(float) if preds else pd.DataFrame(index=df.index)
+        # Need at least one predictor for Cox to fit
+        if enc.shape[1] == 0:
+            raise ValueError("Cox requires ≥1 predictor.")
+        fit_df = pd.concat([df[[duration, event]], enc], axis=1).dropna()
+        cph = CoxPHFitter()
+        cph.fit(fit_df, duration_col=duration, event_col=event)
+        aic = float(cph.AIC_partial_) if hasattr(cph, "AIC_partial_") else float(-2 * cph.log_likelihood_ + 2 * len(cph.params_))
+        # BIC = -2 log L + k log n
+        n_events = int(cph.event_observed.sum())
+        bic = float(-2 * cph.log_likelihood_ + len(cph.params_) * np.log(max(n_events, 1)))
+        p_map = {str(k): float(v) for k, v in cph.summary["p"].items()}
+        return aic, bic, p_map, float(cph.log_likelihood_)
+    raise ValueError(f"Unknown model_type '{model_type}'")
+
+
+@router.post("/stepwise")
+def stepwise_selection(req: StepwiseRequest):
+    """Formal forward / backward / both-direction variable selection.
+
+    Criteria:
+      - "aic": minimise AIC (default).
+      - "bic": minimise BIC.
+      - "p":   add when min p < p_enter, drop when max p > p_exit (Sasieni 1992).
+
+    `forced_in` predictors are always retained regardless of criterion.
+    Returns the trace (each step's chosen action + criterion value) plus
+    the final selected predictor set.
+    """
+    if req.model_type not in ("linear", "logistic", "cox"):
+        raise HTTPException(status_code=422, detail="model_type must be linear | logistic | cox.")
+    if req.direction not in ("forward", "backward", "both"):
+        raise HTTPException(status_code=422, detail="direction must be forward | backward | both.")
+    if req.criterion not in ("aic", "bic", "p"):
+        raise HTTPException(status_code=422, detail="criterion must be aic | bic | p.")
+    if req.model_type in ("linear", "logistic") and not req.outcome:
+        raise HTTPException(status_code=422, detail="outcome required for linear / logistic.")
+    if req.model_type == "cox" and (not req.duration_col or not req.event_col):
+        raise HTTPException(status_code=422, detail="duration_col + event_col required for cox.")
+
+    df_full = _get_df(req.session_id)
+    needed = req.candidates + req.forced_in
+    if req.model_type in ("linear", "logistic"):
+        needed = [req.outcome] + needed
+    else:
+        needed = [req.duration_col, req.event_col] + needed
+    df = apply_imputation(df_full, needed, req.imputation or "listwise")
+
+    forced = list(req.forced_in)
+    pool = [c for c in req.candidates if c not in forced]
+
+    def _crit_val(aic_v, bic_v):
+        return aic_v if req.criterion == "aic" else bic_v
+
+    trace = []
+    selected = list(forced) if req.direction != "backward" else list(forced) + list(pool)
+    iterations = 0
+    max_iter = max(20, 2 * len(req.candidates))
+
+    while iterations < max_iter:
+        iterations += 1
+        # 1) Try adding (forward / both)
+        best_add = None
+        if req.direction in ("forward", "both"):
+            remaining = [c for c in pool if c not in selected]
+            for c in remaining:
+                try_preds = selected + [c]
+                try:
+                    a, b, p_map, _ll = _fit_for_stepwise(req.model_type, df, try_preds, req.outcome,
+                                                         req.duration_col, req.event_col)
+                except Exception:
+                    continue
+                if req.criterion == "p":
+                    # Pick the smallest p among new predictor(s) — handle dummy coding by checking c's matched cols
+                    matched = [k for k in p_map if k.startswith(c)]
+                    if not matched:
+                        continue
+                    p_new = min(p_map[k] for k in matched)
+                    val = p_new
+                    if best_add is None or val < best_add["value"]:
+                        best_add = {"col": c, "value": val, "aic": a, "bic": b}
+                else:
+                    val = _crit_val(a, b)
+                    if best_add is None or val < best_add["value"]:
+                        best_add = {"col": c, "value": val, "aic": a, "bic": b}
+
+        # 2) Try removing (backward / both)
+        best_remove = None
+        if req.direction in ("backward", "both"):
+            removable = [c for c in selected if c not in forced]
+            for c in removable:
+                try_preds = [p for p in selected if p != c]
+                if req.model_type == "cox" and not try_preds:
+                    continue  # Cox needs ≥1 predictor
+                try:
+                    a, b, p_map, _ll = _fit_for_stepwise(req.model_type, df, try_preds, req.outcome,
+                                                         req.duration_col, req.event_col)
+                except Exception:
+                    continue
+                if req.criterion == "p":
+                    # Drop if largest p among current model > p_exit
+                    matched_c = [k for k in p_map if k.startswith(c)]
+                    if matched_c:
+                        continue  # column still present (shouldn't happen)
+                    # value used = max p in remaining model (lower is better → invert)
+                    max_p = max(p_map.values()) if p_map else 0.0
+                    val = -max_p  # we want to drop largest p so lower(=negated) = better
+                    if best_remove is None or val < best_remove["value"]:
+                        best_remove = {"col": c, "value": val, "aic": a, "bic": b, "max_p": max_p}
+                else:
+                    val = _crit_val(a, b)
+                    if best_remove is None or val < best_remove["value"]:
+                        best_remove = {"col": c, "value": val, "aic": a, "bic": b}
+
+        # Current model criterion (for AIC/BIC comparison)
+        try:
+            cur_a, cur_b, cur_p, _ll = _fit_for_stepwise(req.model_type, df, selected, req.outcome,
+                                                         req.duration_col, req.event_col)
+            cur_val = _crit_val(cur_a, cur_b)
+        except Exception:
+            cur_a, cur_b, cur_p, cur_val = float("inf"), float("inf"), {}, float("inf")
+
+        action = None
+        if req.criterion == "p":
+            # Add if best_add p < p_enter; remove if best_remove max_p > p_exit
+            if best_add and best_add["value"] < req.p_enter:
+                selected.append(best_add["col"])
+                action = {"step": iterations, "action": "add", "variable": best_add["col"],
+                          "criterion_value": best_add["value"], "aic": best_add["aic"], "bic": best_add["bic"]}
+            elif best_remove and best_remove.get("max_p", 0) > req.p_exit:
+                selected.remove(best_remove["col"])
+                action = {"step": iterations, "action": "remove", "variable": best_remove["col"],
+                          "criterion_value": best_remove.get("max_p"), "aic": best_remove["aic"], "bic": best_remove["bic"]}
+            else:
+                break
+        else:
+            # AIC/BIC: pick the best improvement (lowest val) vs current
+            candidates_step = []
+            if best_add: candidates_step.append(("add", best_add))
+            if best_remove: candidates_step.append(("remove", best_remove))
+            if not candidates_step:
+                break
+            kind, best = min(candidates_step, key=lambda kv: kv[1]["value"])
+            if best["value"] >= cur_val - 1e-9:
+                break  # no improvement
+            if kind == "add":
+                selected.append(best["col"])
+            else:
+                selected.remove(best["col"])
+            action = {"step": iterations, "action": kind, "variable": best["col"],
+                      "criterion_value": best["value"], "aic": best["aic"], "bic": best["bic"]}
+        trace.append(action)
+
+    # Final fit
+    final_aic, final_bic, final_p, final_llf = _fit_for_stepwise(
+        req.model_type, df, selected, req.outcome, req.duration_col, req.event_col
+    )
+    return {
+        "model_type": req.model_type,
+        "direction": req.direction,
+        "criterion": req.criterion,
+        "forced_in": forced,
+        "selected": selected,
+        "trace": trace,
+        "final_aic": final_aic,
+        "final_bic": final_bic,
+        "final_log_likelihood": final_llf,
+        "n": int(len(df)),
+        "result_text": (
+            f"{req.direction.title()} stepwise ({req.criterion.upper()}) selected "
+            f"{len(selected)} of {len(req.candidates)} candidates ({iterations} step(s)). "
+            f"Final AIC = {final_aic:.2f}, BIC = {final_bic:.2f}."
+        ),
+    }
+
 
 class DiagRequest(BaseModel):
     session_id: str
